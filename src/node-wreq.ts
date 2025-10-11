@@ -6,13 +6,56 @@ let nativeBinding: {
   getProfiles: () => string[];
 };
 
+function loadNativeBinding() {
+  const platform = process.platform;
+  const arch = process.arch;
+
+  // Map Node.js platform/arch to napi binary naming convention
+  const platformArchMap: Record<string, Record<string, string>> = {
+    darwin: {
+      x64: 'darwin-x64',
+      arm64: 'darwin-arm64',
+    },
+    linux: {
+      x64: 'linux-x64',
+      arm64: 'linux-arm64',
+    },
+    win32: {
+      x64: 'win32-x64',
+    },
+  };
+
+  const platformArch = platformArchMap[platform]?.[arch];
+  if (!platformArch) {
+    throw new Error(
+      `Unsupported platform: ${platform}-${arch}. ` +
+        `Supported platforms: darwin-x64, darwin-arm64, linux-x64, linux-arm64, win32-x64`
+    );
+  }
+
+  // Try to load platform-specific binary (napi naming convention)
+  const binaryName = `index.${platformArch}.node`;
+
+  try {
+    return require(`../rust/${binaryName}`);
+  } catch (e1) {
+    // Fallback to index.node (for local development)
+    try {
+      return require('../rust/index.node');
+    } catch (e2) {
+      throw new Error(
+        `Failed to load native module for ${platform}-${arch}. ` +
+          `Tried: ../rust/${binaryName} and ../rust/index.node. ` +
+          `Make sure the package is installed correctly and the native module is built for your platform.`
+      );
+    }
+  }
+}
+
 try {
-  nativeBinding = require('../rust/index.node');
+  nativeBinding = loadNativeBinding();
 } catch (error) {
-  throw new Error(
-    `Failed to load native module: ${error}. ` +
-      `Make sure the package is installed correctly and the native module is built for your platform (${process.platform}-${process.arch}).`
-  );
+  throw error;
 }
 
 /**
