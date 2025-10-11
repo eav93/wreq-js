@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📚 Documentation
+    url: https://github.com/will-work-for-meal/node-wreq#readme
+    about: Read the documentation and guides
+  - name: 💬 Discussions
+    url: https://github.com/will-work-for-meal/node-wreq/discussions
+    about: Ask questions and discuss ideas with the community

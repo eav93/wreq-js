@@ -1,0 +1,52 @@
+{
+  "name": "node-wreq",
+  "version": "0.1.0",
+  "description": "Browser fingerprint bypass library using Rust for TLS/HTTP2 impersonation",
+  "main": "dist/node-wreq.js",
+  "types": "dist/node-wreq.d.ts",
+  "scripts": {
+    "build": "npm run build:rust && npm run build:ts",
+    "build:rust": "napi build --platform --release --cargo-cwd rust rust",
+    "build:ts": "tsc",
+    "artifacts": "napi artifacts",
+    "clean": "rm -rf dist rust/target rust/*.node",
+    "test": "npm run build && node --test dist/test/node-wreq.spec.js",
+    "format": "prettier --write \"src/**/*.{ts,js,json,md}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,js,json,md}\""
+  },
+  "keywords": [
+    "browser",
+    "fingerprint",
+    "bypass",
+    "anti-bot",
+    "tls",
+    "http2",
+    "impersonation",
+    "web-scraping"
+  ],
+  "author": "will-work-for-meal",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "@napi-rs/cli": "^2.18.0",
+    "prettier": "^3.2.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "files": [
+    "dist",
+    "rust/*.node"
+  ]
+}

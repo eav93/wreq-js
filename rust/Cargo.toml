@@ -1,0 +1,32 @@
+[package]
+name = "browser-bypass"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# HTTP client with browser impersonation
+wreq = { version = "6.0.0-rc.20", default-features = false, features = ["cookies", "json"] }
+wreq-util = "3.0.0-rc.1"
+
+# Neon for Node.js bindings
+neon = { version = "1.0", default-features = false, features = ["napi-6"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Async runtime (if needed)
+tokio = { version = "1.0", features = ["full"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

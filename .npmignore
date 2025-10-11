@@ -1,0 +1,20 @@
+# Source files
+src/
+rust/src/
+
+# Config files
+tsconfig.json
+.github/
+.claude/
+
+# Development files
+*.md
+!README.md
+
+# Tests
+*.test.ts
+*.test.js
+test.ts
+
+# Build artifacts that aren't needed
+rust/Cargo.lock
