@@ -91,5 +91,4 @@ export type BrowserProfile =
   | 'okhttp_4.9'
   | 'okhttp_4.10'
   | 'okhttp_4.12'
-  | 'okhttp_5'
-;
+  | 'okhttp_5';

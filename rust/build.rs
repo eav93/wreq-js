@@ -37,14 +37,13 @@ fn generate_typescript_type(profiles: &[String]) -> String {
     ts_content.push_str("export type BrowserProfile =\n");
 
     for (i, profile) in profiles.iter().enumerate() {
-        if i == 0 {
-            ts_content.push_str(&format!("  | '{}'\n", profile));
+        if i == profiles.len() - 1 {
+            // Last profile - put semicolon on same line
+            ts_content.push_str(&format!("  | '{}';\n", profile));
         } else {
             ts_content.push_str(&format!("  | '{}'\n", profile));
         }
     }
-
-    ts_content.push_str(";\n");
 
     ts_content
 }
