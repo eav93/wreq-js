@@ -4,6 +4,13 @@
   "description": "Browser fingerprint bypass library using Rust for TLS/HTTP2 impersonation",
   "main": "dist/wreq-js.js",
   "types": "dist/wreq-js.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/wreq-js.d.ts",
+      "require": "./dist/wreq-js.js",
+      "import": "./dist/wreq-js.js"
+    }
+  },
   "scripts": {
     "build": "npm run build:rust && npm run build:ts",
     "build:rust": "napi build --platform --release --cargo-cwd rust rust",
@@ -76,6 +83,7 @@
         "x86_64-apple-darwin",
         "aarch64-apple-darwin",
         "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
         "x86_64-pc-windows-msvc"
       ]
     }
