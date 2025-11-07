@@ -43,6 +43,12 @@ jobs:
         with:
           targets: ${{ matrix.settings.target }}
 
+      - name: Setup Zig for cross-compilation
+        if: matrix.settings.target == 'aarch64-unknown-linux-gnu'
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
+
       - name: Install dependencies
         run: npm install
 
