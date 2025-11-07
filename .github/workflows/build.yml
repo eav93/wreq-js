@@ -1,9 +1,10 @@
-name: 🏗️ Build Native Modules
+name: 🏗️ Build and Publish Package
 
 on:
   pull_request:
-  release:
-    types: [published]
+  push:
+    tags:
+      - 'v*'
 
 jobs:
   build:
@@ -54,13 +55,13 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish to npm
+    name: Publish Package
     runs-on: ubuntu-latest
     needs: build
-    if: github.event_name == 'release'
+    if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: read
-      id-token: write
+      id-token: write  # Required for OIDC trusted publishing
 
     steps:
       - uses: actions/checkout@v4
@@ -70,6 +71,9 @@ jobs:
         with:
           node-version: 20
           registry-url: 'https://registry.npmjs.org'
+
+      - name: Ensure npm 11.5.1+ for trusted publishing
+        run: npm install -g npm@latest
 
       - name: Install dependencies
         run: npm ci
@@ -91,7 +95,8 @@ jobs:
       - name: Build TypeScript
         run: npm run build:ts
 
-      - name: Publish to npm
+      - name: Publish to npm with trusted publishing
         run: npm publish --provenance --access public
         env:
+          # TODO: Remove this after initial publish and trusted publisher is configured on npmjs.com
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
