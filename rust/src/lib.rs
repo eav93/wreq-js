@@ -1,16 +1,19 @@
 mod client;
-mod websocket;
 mod generated_profiles;
+mod websocket;
 
+use client::{make_request, RequestOptions, Response, HTTP_RUNTIME};
+use futures_util::StreamExt;
 use neon::prelude::*;
 use neon::types::buffer::TypedArray;
-use client::{make_request, RequestOptions, Response};
-use websocket::{connect_websocket, store_connection, get_connection, remove_connection, WebSocketOptions, WS_RUNTIME};
 use std::collections::HashMap;
 use std::sync::Arc;
-use wreq_util::Emulation;
-use futures_util::StreamExt;
+use websocket::{
+    connect_websocket, get_connection, remove_connection, store_connection, WebSocketOptions,
+    WS_RUNTIME,
+};
 use wreq::ws::message::Message;
+use wreq_util::Emulation;
 
 // Parse browser string to Emulation enum using serde
 fn parse_emulation(browser: &str) -> Emulation {
@@ -21,7 +24,10 @@ fn parse_emulation(browser: &str) -> Emulation {
 }
 
 // Convert JS object to RequestOptions
-fn js_object_to_request_options(cx: &mut FunctionContext, obj: Handle<JsObject>) -> NeonResult<RequestOptions> {
+fn js_object_to_request_options(
+    cx: &mut FunctionContext,
+    obj: Handle<JsObject>,
+) -> NeonResult<RequestOptions> {
     // Get URL (required)
     let url: Handle<JsString> = obj.get(cx, "url")?;
     let url = url.value(cx);
@@ -89,7 +95,10 @@ fn js_object_to_request_options(cx: &mut FunctionContext, obj: Handle<JsObject>)
 }
 
 // Convert Response to JS object
-fn response_to_js_object<'a, C: Context<'a>>(cx: &mut C, response: Response) -> JsResult<'a, JsObject> {
+fn response_to_js_object<'a, C: Context<'a>>(
+    cx: &mut C,
+    response: Response,
+) -> JsResult<'a, JsObject> {
     let obj = cx.empty_object();
 
     // Status
@@ -135,12 +144,8 @@ fn request(mut cx: FunctionContext) -> JsResult<JsPromise> {
     let channel = cx.channel();
     let (deferred, promise) = cx.promise();
 
-    // Create a new Tokio runtime for this request
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
-
-        // Make the request
-        let result = rt.block_on(make_request(options));
+    HTTP_RUNTIME.spawn(async move {
+        let result = make_request(options).await;
 
         // Send result back to JS
         deferred.settle_with(&channel, move |mut cx| {
@@ -212,10 +217,8 @@ fn websocket_connect(mut cx: FunctionContext) -> JsResult<JsPromise> {
 
     // Get callbacks
     let on_message: Handle<JsFunction> = options_obj.get(&mut cx, "onMessage")?;
-    let on_close_opt = options_obj
-        .get_opt::<JsFunction, _, _>(&mut cx, "onClose")?;
-    let on_error_opt = options_obj
-        .get_opt::<JsFunction, _, _>(&mut cx, "onError")?;
+    let on_close_opt = options_obj.get_opt::<JsFunction, _, _>(&mut cx, "onClose")?;
+    let on_error_opt = options_obj.get_opt::<JsFunction, _, _>(&mut cx, "onError")?;
 
     let options = WebSocketOptions {
         url,
@@ -373,13 +376,11 @@ fn websocket_send(mut cx: FunctionContext) -> JsResult<JsPromise> {
             }
         });
 
-        deferred.settle_with(&channel, move |mut cx| {
-            match result {
-                Ok(()) => Ok(cx.undefined()),
-                Err(e) => {
-                    let error_msg = format!("{:#}", e);
-                    cx.throw_error(error_msg)
-                }
+        deferred.settle_with(&channel, move |mut cx| match result {
+            Ok(()) => Ok(cx.undefined()),
+            Err(e) => {
+                let error_msg = format!("{:#}", e);
+                cx.throw_error(error_msg)
             }
         });
     });
@@ -415,13 +416,11 @@ fn websocket_close(mut cx: FunctionContext) -> JsResult<JsPromise> {
         // Remove connection from storage after closing
         remove_connection(id);
 
-        deferred.settle_with(&channel, move |mut cx| {
-            match result {
-                Ok(()) => Ok(cx.undefined()),
-                Err(e) => {
-                    let error_msg = format!("{:#}", e);
-                    cx.throw_error(error_msg)
-                }
+        deferred.settle_with(&channel, move |mut cx| match result {
+            Ok(()) => Ok(cx.undefined()),
+            Err(e) => {
+                let error_msg = format!("{:#}", e);
+                cx.throw_error(error_msg)
             }
         });
     });
