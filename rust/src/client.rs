@@ -9,7 +9,7 @@ use tokio::runtime::Runtime;
 use wreq::{Client as HttpClient, Proxy};
 use wreq_util::Emulation;
 
-const CLIENT_CACHE_LIMIT: usize = 32;
+const CLIENT_CACHE_LIMIT: usize = 1024;
 const TIMEOUT_BUCKET_MS: u64 = 5_000;
 
 pub static HTTP_RUNTIME: Lazy<Runtime> = Lazy::new(|| {
