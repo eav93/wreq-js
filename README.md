@@ -2,7 +2,7 @@
 
 High-performance Node.js bindings for the Rust-based wreq HTTP client with native TLS and HTTP/2 browser impersonation.
 
-Note: This is a personal fork of [will-work-for-meal/node-wreq](https://github.com/will-work-for-meal/node-wreq) (originally named node-wreq) with ongoing maintenance and faster dependency updates.
+Note: This is my fork of [will-work-for-meal/node-wreq](https://github.com/will-work-for-meal/node-wreq) (originally named node-wreq) with ongoing maintenance and faster dependency updates.
 
 ## Features
 
@@ -35,18 +35,10 @@ This library reproduces browser network behavior with high fidelity.
 ## Installation
 
 ```bash
-# From GitHub (this fork)
-# Latest master branch
 npm install wreq-js
 yarn add wreq-js
 pnpm add wreq-js
 bun add wreq-js
-
-# From npm registry (original repo as node-wreq)
-npm install node-wreq
-yarn add node-wreq
-pnpm add node-wreq
-bun add node-wreq
 ```
 
 Pre-built native modules are included for major platforms:
