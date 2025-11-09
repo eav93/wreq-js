@@ -3,6 +3,21 @@ import type { BrowserProfile } from "./generated-types";
 export type { BrowserProfile };
 
 /**
+ * Controls how cookies are scoped for a request.
+ * - "session": reuse an explicit Session or sessionId across calls.
+ * - "ephemeral": create an isolated, single-use session.
+ */
+export type CookieMode = "session" | "ephemeral";
+
+/**
+ * Minimal handle implemented by {@link Session}. Exposed so {@link RequestInit.session}
+ * can accept either a Session instance or a compatible object.
+ */
+export interface SessionHandle {
+  readonly id: string;
+}
+
+/**
  * A tuple of [name, value] pairs used for initializing headers.
  * Both name and value must be strings.
  *
@@ -116,6 +131,47 @@ export interface RequestInit {
    * @default 30000
    */
   timeout?: number;
+
+  /**
+   * Controls how cookies are managed for this call.
+   * - "ephemeral": default when no session/sessionId is provided. Creates an isolated session per request.
+   * - "session": requires an explicit session or sessionId and reuses its cookie jar.
+   */
+  cookieMode?: CookieMode;
+
+  /**
+   * Session instance to bind this request to. When provided, {@link cookieMode}
+   * automatically behaves like `"session"`.
+   */
+  session?: SessionHandle;
+
+  /**
+   * Identifier of an existing session created elsewhere (e.g., via {@link createSession}).
+   */
+  sessionId?: string;
+}
+
+/**
+ * Configuration for {@link createSession}.
+ */
+export interface CreateSessionOptions {
+  /**
+   * Provide a custom identifier instead of an auto-generated random ID.
+   */
+  sessionId?: string;
+  /**
+   * Browser profile to bind to this session. Defaults to 'chrome_142'.
+   */
+  browser?: BrowserProfile;
+  /**
+   * Optional proxy for every request made through the session.
+   */
+  proxy?: string;
+  /**
+   * Default timeout applied when {@link Session.fetch} is called without
+   * overriding `timeout`.
+   */
+  timeout?: number;
 }
 
 /**
@@ -187,6 +243,19 @@ export interface RequestOptions {
    * @default 30000
    */
   timeout?: number;
+
+  /**
+   * Identifier for the session that should handle this request.
+   * @internal
+   */
+  sessionId?: string;
+
+  /**
+   * Internal flag indicating whether the session should be discarded once the
+   * request finishes.
+   * @internal
+   */
+  ephemeral?: boolean;
 }
 
 /**

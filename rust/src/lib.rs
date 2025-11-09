@@ -2,10 +2,14 @@ mod client;
 mod generated_profiles;
 mod websocket;
 
-use client::{make_request, RequestOptions, Response, HTTP_RUNTIME};
+use client::{
+    clear_managed_session, create_managed_session, drop_managed_session, generate_session_id, make_request,
+    RequestOptions, Response, HTTP_RUNTIME,
+};
 use futures_util::StreamExt;
 use neon::prelude::*;
 use neon::types::buffer::TypedArray;
+use neon::types::JsBoolean;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Semaphore};
@@ -86,6 +90,20 @@ fn js_object_to_request_options(
         .map(|v| v.value(cx) as u64)
         .unwrap_or(30000);
 
+    // Get sessionId (optional)
+    let session_id = obj
+        .get_opt(cx, "sessionId")?
+        .and_then(|v: Handle<JsValue>| v.downcast::<JsString, _>(cx).ok())
+        .map(|v| v.value(cx))
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(generate_session_id);
+
+    let ephemeral = obj
+        .get_opt(cx, "ephemeral")?
+        .and_then(|v: Handle<JsValue>| v.downcast::<JsBoolean, _>(cx).ok())
+        .map(|v| v.value(cx))
+        .unwrap_or(false);
+
     Ok(RequestOptions {
         url,
         emulation,
@@ -94,6 +112,8 @@ fn js_object_to_request_options(
         body,
         proxy,
         timeout,
+        session_id,
+        ephemeral,
     })
 }
 
@@ -174,6 +194,62 @@ fn get_profiles(mut cx: FunctionContext) -> JsResult<JsArray> {
     }
 
     Ok(js_array)
+}
+
+fn create_session(mut cx: FunctionContext) -> JsResult<JsString> {
+    let options_value = cx.argument_opt(0);
+
+    let (session_id_opt, browser_opt, proxy_opt) = if let Some(value) = options_value {
+        if value.is_a::<JsUndefined, _>(&mut cx) || value.is_a::<JsNull, _>(&mut cx) {
+            (None, None, None)
+        } else {
+            let obj = value.downcast_or_throw::<JsObject, _>(&mut cx)?;
+            let session_id = obj
+                .get_opt(&mut cx, "sessionId")?
+                .and_then(|v: Handle<JsValue>| v.downcast::<JsString, _>(&mut cx).ok())
+                .map(|v| v.value(&mut cx));
+            let browser = obj
+                .get_opt(&mut cx, "browser")?
+                .and_then(|v: Handle<JsValue>| v.downcast::<JsString, _>(&mut cx).ok())
+                .map(|v| v.value(&mut cx));
+            let proxy = obj
+                .get_opt(&mut cx, "proxy")?
+                .and_then(|v: Handle<JsValue>| v.downcast::<JsString, _>(&mut cx).ok())
+                .map(|v| v.value(&mut cx));
+            (session_id, browser, proxy)
+        }
+    } else {
+        (None, None, None)
+    };
+
+    let session_id = session_id_opt.unwrap_or_else(generate_session_id);
+    let browser_str = browser_opt.unwrap_or_else(|| "chrome_142".to_string());
+    let emulation = parse_emulation(&browser_str);
+
+    match create_managed_session(session_id.clone(), emulation, proxy_opt) {
+        Ok(id) => Ok(cx.string(id)),
+        Err(e) => {
+            let msg = format!("{:#}", e);
+            cx.throw_error(msg)
+        }
+    }
+}
+
+fn clear_session(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+    let session_id = cx.argument::<JsString>(0)?.value(&mut cx);
+
+    if let Err(e) = clear_managed_session(&session_id) {
+        let msg = format!("{:#}", e);
+        return cx.throw_error(msg);
+    }
+
+    Ok(cx.undefined())
+}
+
+fn drop_session(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+    let session_id = cx.argument::<JsString>(0)?.value(&mut cx);
+    drop_managed_session(&session_id);
+    Ok(cx.undefined())
 }
 
 // WebSocket connection function
@@ -494,6 +570,9 @@ fn websocket_close(mut cx: FunctionContext) -> JsResult<JsPromise> {
 fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("request", request)?;
     cx.export_function("getProfiles", get_profiles)?;
+    cx.export_function("createSession", create_session)?;
+    cx.export_function("clearSession", clear_session)?;
+    cx.export_function("dropSession", drop_session)?;
     cx.export_function("websocketConnect", websocket_connect)?;
     cx.export_function("websocketSend", websocket_send)?;
     cx.export_function("websocketClose", websocket_close)?;

@@ -1,11 +1,15 @@
+import { randomBytes } from "node:crypto";
 import { STATUS_CODES } from "node:http";
 import type {
   BodyInit,
   BrowserProfile,
+  CookieMode,
+  CreateSessionOptions,
   HeadersInit,
   NativeResponse,
   NativeWebSocketConnection,
   RequestOptions,
+  SessionHandle,
   WebSocketOptions,
   RequestInit as WreqRequestInit,
 } from "./types";
@@ -21,12 +25,21 @@ interface NativeWebSocketOptions {
   onError?: (error: string) => void;
 }
 
+interface NativeSessionOptions {
+  sessionId: string;
+  browser: BrowserProfile;
+  proxy?: string;
+}
+
 let nativeBinding: {
   request: (options: RequestOptions) => Promise<NativeResponse>;
   getProfiles: () => string[];
   websocketConnect: (options: NativeWebSocketOptions) => Promise<NativeWebSocketConnection>;
   websocketSend: (ws: NativeWebSocketConnection, data: string | Buffer) => Promise<void>;
   websocketClose: (ws: NativeWebSocketConnection) => Promise<void>;
+  createSession: (options: NativeSessionOptions) => string;
+  clearSession: (sessionId: string) => void;
+  dropSession: (sessionId: string) => void;
 };
 
 let cachedProfiles: BrowserProfile[] | undefined;
@@ -89,6 +102,44 @@ const websocketFinalizer =
     : undefined;
 
 const DEFAULT_BROWSER: BrowserProfile = "chrome_142";
+
+type SessionDefaults = {
+  browser: BrowserProfile;
+  proxy?: string;
+  timeout?: number;
+};
+
+type SessionResolution = {
+  sessionId: string;
+  cookieMode: CookieMode;
+  dropAfterRequest: boolean;
+};
+
+function generateSessionId(): string {
+  const cryptoGlobal = globalThis.crypto as { randomUUID?: () => string } | undefined;
+  if (cryptoGlobal?.randomUUID) {
+    return cryptoGlobal.randomUUID();
+  }
+
+  return randomBytes(16).toString("hex");
+}
+
+function normalizeSessionOptions(options?: CreateSessionOptions): { sessionId: string; defaults: SessionDefaults } {
+  const sessionId = options?.sessionId ?? generateSessionId();
+  const defaults: SessionDefaults = {
+    browser: options?.browser ?? DEFAULT_BROWSER,
+  };
+
+  if (options?.proxy !== undefined) {
+    defaults.proxy = options.proxy;
+  }
+
+  if (options?.timeout !== undefined) {
+    defaults.timeout = options.timeout;
+  }
+
+  return { sessionId, defaults };
+}
 
 type HeaderStoreEntry = {
   name: string;
@@ -320,6 +371,151 @@ export class Response {
   }
 }
 
+export class Session implements SessionHandle {
+  readonly id: string;
+  private disposed = false;
+  private readonly defaults: SessionDefaults;
+
+  constructor(id: string, defaults: SessionDefaults) {
+    this.id = id;
+    this.defaults = defaults;
+  }
+
+  get closed(): boolean {
+    return this.disposed;
+  }
+
+  private ensureActive(): void {
+    if (this.disposed) {
+      throw new RequestError("Session has been closed");
+    }
+  }
+
+  private enforceBrowser(browser?: BrowserProfile): BrowserProfile {
+    const resolved = browser ?? this.defaults.browser;
+
+    if (resolved !== this.defaults.browser) {
+      throw new RequestError("Session browser cannot be changed after creation");
+    }
+
+    return resolved;
+  }
+
+  private enforceProxy(proxy?: string): string | undefined {
+    if (proxy === undefined) {
+      return this.defaults.proxy;
+    }
+
+    if ((this.defaults.proxy ?? null) !== (proxy ?? null)) {
+      throw new RequestError("Session proxy cannot be changed after creation");
+    }
+
+    return proxy;
+  }
+
+  async fetch(input: string | URL, init?: WreqRequestInit): Promise<Response> {
+    this.ensureActive();
+
+    const config: WreqRequestInit = {
+      ...(init ?? {}),
+      session: this,
+      cookieMode: "session",
+    };
+
+    config.browser = this.enforceBrowser(config.browser);
+
+    const proxy = this.enforceProxy(config.proxy);
+    if (proxy !== undefined || config.proxy !== undefined) {
+      if (proxy === undefined) {
+        delete config.proxy;
+      } else {
+        config.proxy = proxy;
+      }
+    }
+
+    if (config.timeout === undefined && this.defaults.timeout !== undefined) {
+      config.timeout = this.defaults.timeout;
+    }
+
+    return fetch(input, config);
+  }
+
+  async clearCookies(): Promise<void> {
+    this.ensureActive();
+    try {
+      nativeBinding.clearSession(this.id);
+    } catch (error) {
+      throw new RequestError(String(error));
+    }
+  }
+
+  async close(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+
+    this.disposed = true;
+
+    try {
+      nativeBinding.dropSession(this.id);
+    } catch (error) {
+      throw new RequestError(String(error));
+    }
+  }
+}
+
+function resolveSessionContext(config: WreqRequestInit): SessionResolution {
+  const requestedMode = config.cookieMode ?? "ephemeral";
+  const sessionCandidate = config.session;
+  const providedSessionId = typeof config.sessionId === "string" ? config.sessionId.trim() : undefined;
+
+  if (sessionCandidate && providedSessionId) {
+    throw new RequestError("Provide either `session` or `sessionId`, not both.");
+  }
+
+  if (sessionCandidate) {
+    if (!(sessionCandidate instanceof Session)) {
+      throw new RequestError("`session` must be created via createSession()");
+    }
+
+    if (sessionCandidate.closed) {
+      throw new RequestError("Session has been closed");
+    }
+
+    return {
+      sessionId: sessionCandidate.id,
+      cookieMode: "session",
+      dropAfterRequest: false,
+    };
+  }
+
+  if (providedSessionId) {
+    if (!providedSessionId) {
+      throw new RequestError("sessionId must not be empty");
+    }
+
+    if (requestedMode === "ephemeral") {
+      throw new RequestError("cookieMode 'ephemeral' cannot be combined with sessionId");
+    }
+
+    return {
+      sessionId: providedSessionId,
+      cookieMode: "session",
+      dropAfterRequest: false,
+    };
+  }
+
+  if (requestedMode === "session") {
+    throw new RequestError("cookieMode 'session' requires a session or sessionId");
+  }
+
+  return {
+    sessionId: generateSessionId(),
+    cookieMode: "ephemeral",
+    dropAfterRequest: true,
+  };
+}
+
 interface AbortHandler {
   promise: Promise<never>;
   cleanup: () => void;
@@ -504,6 +700,7 @@ async function dispatchRequest(
 export async function fetch(input: string | URL, init?: WreqRequestInit): Promise<Response> {
   const url = normalizeUrlInput(input);
   const config = init ?? {};
+  const sessionContext = resolveSessionContext(config);
 
   validateRedirectMode(config.redirect);
   validateBrowserProfile(config.browser);
@@ -526,9 +723,54 @@ export async function fetch(input: string | URL, init?: WreqRequestInit): Promis
     ...(body !== undefined && { body }),
     ...(config.proxy !== undefined && { proxy: config.proxy }),
     ...(config.timeout !== undefined && { timeout: config.timeout }),
+    sessionId: sessionContext.sessionId,
+    ephemeral: sessionContext.dropAfterRequest,
   };
 
-  return dispatchRequest(requestOptions, url, config.signal ?? null);
+  try {
+    return await dispatchRequest(requestOptions, url, config.signal ?? null);
+  } finally {
+    if (sessionContext.dropAfterRequest) {
+      try {
+        nativeBinding.dropSession(sessionContext.sessionId);
+      } catch {
+        // ignore cleanup errors for ephemeral sessions
+      }
+    }
+  }
+}
+
+export async function createSession(options?: CreateSessionOptions): Promise<Session> {
+  const { sessionId, defaults } = normalizeSessionOptions(options);
+
+  validateBrowserProfile(defaults.browser);
+
+  let createdId: string;
+
+  try {
+    createdId = nativeBinding.createSession({
+      sessionId,
+      browser: defaults.browser,
+      ...(defaults.proxy !== undefined && { proxy: defaults.proxy }),
+    });
+  } catch (error) {
+    throw new RequestError(String(error));
+  }
+
+  return new Session(createdId, defaults);
+}
+
+export async function withSession<T>(
+  fn: (session: Session) => Promise<T> | T,
+  options?: CreateSessionOptions,
+): Promise<T> {
+  const session = await createSession(options);
+
+  try {
+    return await fn(session);
+  } finally {
+    await session.close();
+  }
 }
 
 /**
@@ -564,6 +806,10 @@ export async function request(options: RequestOptions): Promise<Response> {
 
   if (rest.timeout !== undefined) {
     init.timeout = rest.timeout;
+  }
+
+  if (rest.sessionId !== undefined) {
+    init.sessionId = rest.sessionId;
   }
 
   return fetch(url, init);
@@ -736,10 +982,13 @@ export async function websocket(options: WebSocketOptions): Promise<WebSocket> {
 export type {
   BodyInit,
   BrowserProfile,
+  CookieMode,
+  CreateSessionOptions,
   HeadersInit,
   HttpMethod,
   RequestInit,
   RequestOptions,
+  SessionHandle,
   WebSocketOptions,
 } from "./types";
 
@@ -751,8 +1000,11 @@ export default {
   get,
   post,
   getProfiles,
+  createSession,
+  withSession,
   websocket,
   WebSocket,
   Headers,
   Response,
+  Session,
 };

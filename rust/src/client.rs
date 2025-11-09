@@ -6,10 +6,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Runtime;
+use uuid::Uuid;
 use wreq::{Client as HttpClient, Proxy};
 use wreq_util::Emulation;
-
-const TIMEOUT_BUCKET_MS: u64 = 5_000;
 
 pub static HTTP_RUNTIME: Lazy<Runtime> = Lazy::new(|| {
     tokio::runtime::Builder::new_multi_thread()
@@ -18,18 +17,7 @@ pub static HTTP_RUNTIME: Lazy<Runtime> = Lazy::new(|| {
         .expect("Failed to create shared HTTP runtime")
 });
 
-static CLIENT_CACHE: Lazy<Cache<ClientKey, Arc<HttpClient>>> = Lazy::new(|| {
-    Cache::builder()
-        .time_to_idle(Duration::from_secs(300)) // 5 minute idle timeout
-        .build()
-});
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct ClientKey {
-    emulation: String,
-    proxy: Option<String>,
-    timeout_bucket: u64,
-}
+static SESSION_MANAGER: Lazy<SessionManager> = Lazy::new(SessionManager::new);
 
 #[derive(Debug, Clone)]
 pub struct RequestOptions {
@@ -40,6 +28,8 @@ pub struct RequestOptions {
     pub body: Option<String>,
     pub proxy: Option<String>,
     pub timeout: u64,
+    pub session_id: String,
+    pub ephemeral: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -51,8 +41,117 @@ pub struct Response {
     pub url: String,
 }
 
+#[derive(Clone)]
+struct SessionConfig {
+    emulation: Emulation,
+    label: String,
+    proxy: Option<String>,
+}
+
+impl SessionConfig {
+    fn from_request(options: &RequestOptions) -> Self {
+        Self {
+            emulation: options.emulation.clone(),
+            label: emulation_label(&options.emulation),
+            proxy: options.proxy.clone(),
+        }
+    }
+
+    fn new(emulation: Emulation, proxy: Option<String>) -> Self {
+        let label = emulation_label(&emulation);
+        Self {
+            emulation,
+            label,
+            proxy,
+        }
+    }
+
+    fn matches(&self, other: &SessionConfig) -> bool {
+        self.label == other.label && self.proxy == other.proxy
+    }
+}
+
+#[derive(Clone)]
+struct SessionEntry {
+    client: Arc<HttpClient>,
+    config: SessionConfig,
+}
+
+struct SessionManager {
+    cache: Cache<String, Arc<SessionEntry>>,
+}
+
+impl SessionManager {
+    fn new() -> Self {
+        Self {
+            cache: Cache::builder()
+                .time_to_idle(Duration::from_secs(300))
+                .build(),
+        }
+    }
+
+    fn client_for(&self, session_id: &str, config: SessionConfig) -> Result<Arc<HttpClient>> {
+        if let Some(entry) = self.cache.get(session_id) {
+            if entry.config.matches(&config) {
+                return Ok(entry.client.clone());
+            } else {
+                anyhow::bail!(
+                    "Session '{}' was created with different browser/proxy configuration",
+                    session_id
+                );
+            }
+        }
+
+        let entry = self.build_entry(config)?;
+        self.cache.insert(session_id.to_string(), entry.clone());
+        Ok(entry.client.clone())
+    }
+
+    fn build_entry(&self, config: SessionConfig) -> Result<Arc<SessionEntry>> {
+        let client = Arc::new(build_client(&config)?);
+        Ok(Arc::new(SessionEntry { client, config }))
+    }
+
+    fn create_session(&self, session_id: String, config: SessionConfig) -> Result<String> {
+        let entry = self.build_entry(config)?;
+        self.cache.insert(session_id.clone(), entry);
+        Ok(session_id)
+    }
+
+    fn clear_session(&self, session_id: &str) -> Result<()> {
+        let existing = self
+            .cache
+            .get(session_id)
+            .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
+        let config = existing.config.clone();
+        let entry = self.build_entry(config)?;
+        self.cache.insert(session_id.to_string(), entry);
+        Ok(())
+    }
+
+    fn drop_session(&self, session_id: &str) {
+        self.cache.invalidate(session_id);
+    }
+}
+
 pub async fn make_request(options: RequestOptions) -> Result<Response> {
-    let client = get_or_build_client(&options)?;
+    let session_id = options.session_id.clone();
+    let ephemeral = options.ephemeral;
+
+    let result = make_request_inner(options).await;
+
+    if ephemeral {
+        SESSION_MANAGER.drop_session(&session_id);
+    }
+
+    result
+}
+
+async fn make_request_inner(options: RequestOptions) -> Result<Response> {
+    let client = {
+        let config = SessionConfig::from_request(&options);
+        SESSION_MANAGER.client_for(&options.session_id, config)?
+    };
 
     let RequestOptions {
         url,
@@ -134,24 +233,12 @@ pub async fn make_request(options: RequestOptions) -> Result<Response> {
     })
 }
 
-fn get_or_build_client(options: &RequestOptions) -> Result<Arc<HttpClient>> {
-    let key = ClientKey {
-        emulation: emulation_label(&options.emulation),
-        proxy: options.proxy.clone(),
-        timeout_bucket: bucket_timeout(options.timeout),
-    };
-
-    CLIENT_CACHE
-        .try_get_with(key, || build_client(options).map(Arc::new))
-        .map_err(|e| anyhow::anyhow!("Failed to get or build client: {}", e))
-}
-
-fn build_client(options: &RequestOptions) -> Result<HttpClient> {
+fn build_client(config: &SessionConfig) -> Result<HttpClient> {
     let mut client_builder = HttpClient::builder()
-        .emulation(options.emulation.clone())
+        .emulation(config.emulation.clone())
         .cookie_store(true);
 
-    if let Some(proxy_url) = options.proxy.as_deref() {
+    if let Some(proxy_url) = config.proxy.as_deref() {
         let proxy = Proxy::all(proxy_url).context("Failed to create proxy")?;
         client_builder = client_builder.proxy(proxy);
     }
@@ -161,14 +248,26 @@ fn build_client(options: &RequestOptions) -> Result<HttpClient> {
         .context("Failed to build HTTP client")
 }
 
-fn bucket_timeout(timeout: u64) -> u64 {
-    let buckets = (timeout + TIMEOUT_BUCKET_MS - 1) / TIMEOUT_BUCKET_MS;
-    buckets.max(1) * TIMEOUT_BUCKET_MS
-}
-
 fn emulation_label(emulation: &Emulation) -> String {
     match serde_json::to_value(emulation) {
         Ok(Value::String(label)) => label,
         _ => "chrome_142".to_string(),
     }
+}
+
+pub fn create_managed_session(session_id: String, emulation: Emulation, proxy: Option<String>) -> Result<String> {
+    let config = SessionConfig::new(emulation, proxy);
+    SESSION_MANAGER.create_session(session_id, config)
+}
+
+pub fn clear_managed_session(session_id: &str) -> Result<()> {
+    SESSION_MANAGER.clear_session(session_id)
+}
+
+pub fn drop_managed_session(session_id: &str) {
+    SESSION_MANAGER.drop_session(session_id);
+}
+
+pub fn generate_session_id() -> String {
+    Uuid::new_v4().to_string()
 }
