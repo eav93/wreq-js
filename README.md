@@ -2,8 +2,6 @@
 
 High-performance Node.js bindings for the Rust-based wreq HTTP client with native TLS and HTTP/2 browser impersonation.
 
-Note: This is my fork of [will-work-for-meal/node-wreq](https://github.com/will-work-for-meal/node-wreq) (originally named node-wreq) with ongoing maintenance and faster dependency updates.
-
 ## Features
 
 - Native performance (no process spawning)
@@ -298,9 +296,12 @@ console.log(profiles);
 
 Please read the [Contributing Guide](CONTRIBUTING.md).
 
+## Origins
+This project began as a fork of [will-work-for-meal/node-wreq](https://github.com/will-work-for-meal/node-wreq) but has since evolved into an independent implementation with extensive rewrites, new APIs, and active maintenance. It is not affiliated with the original project.
+
 ## Acknowledgments
 
 - [wreq](https://github.com/0x676e67/wreq) — Rust HTTP client with browser impersonation
 - [wreq-util](https://github.com/0x676e67/wreq-util) — Upstream utility project that tracks and ships browser fingerprint updates rapidly
 - [Neon](https://neon-bindings.com/) — Rust ↔ Node.js bindings
-- Original Node.js wrapper: [will-work-for-meal/node-wreq](https://github.com/will-work-for-meal/node-wreq) (named node-wreq) — clean, well-written baseline this fork builds on
+- [will-work-for-meal/node-wreq](https://github.com/will-work-for-meal/node-wreq) — Original Node.js wrapper that inspired the initial version of this project
