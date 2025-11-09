@@ -128,6 +128,39 @@ const response = await fetch('https://example.com', {
 });
 ```
 
+### Session & Cookie Isolation
+
+Every bare `fetch()` call runs in *ephemeral* mode: the native layer generates a throwaway session so cookies, HTTP/2 settings, and TLS caches never leak across calls. To persist state, create a `Session` (or supply a known `sessionId`) and reuse it explicitly.
+
+```typescript
+import { createSession, withSession } from 'wreq-js';
+
+// Manual lifecycle control
+const session = await createSession({ browser: 'chrome_142' });
+await session.fetch('https://example.com/login', { method: 'POST', body: '...' });
+const dashboard = await session.fetch('https://example.com/me');
+await session.clearCookies(); // optional
+await session.close();
+
+// Helper that automatically disposes the session
+await withSession(async (session) => {
+  await session.fetch('https://example.com/a');
+  await session.fetch('https://example.com/b');
+});
+```
+
+Requests also accept low-level controls:
+
+- `sessionId`: reuse a known identifier (e.g., to shard sessions yourself).
+- `cookieMode`: force `"ephemeral"` versus `"session"` behavior. `"session"` requires a `session` or `sessionId`; `"ephemeral"` is the default for plain fetches.
+
+```typescript
+await fetch('https://example.com', {
+  sessionId: 'user-42',
+  cookieMode: 'session',
+});
+```
+
 ### WebSocket Connection
 
 ```typescript
@@ -178,6 +211,12 @@ interface RequestInit {
   proxy?: string;
   /** Request timeout in milliseconds (default 30000) */
   timeout?: number;
+  /** Cookie scoping strategy ('ephemeral' by default) */
+  cookieMode?: 'session' | 'ephemeral';
+  /** Explicit session instance created via `createSession` */
+  session?: Session;
+  /** Use an existing session id without holding the Session object */
+  sessionId?: string;
 }
 ```
 
