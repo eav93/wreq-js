@@ -1,6 +1,6 @@
 [package]
 name = "wreq-js"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2024"
 license = "MIT"
 authors = ["will-work-for-meal", "Oleksandr Herasymov"]
@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 # HTTP client with browser impersonation
-wreq = { version = "6.0.0-rc.21", default-features = false, features = ["gzip", "deflate", "socks", "cookies", "webpki-roots", "ws"] }
+wreq = { version = "6.0.0-rc.21", default-features = false, features = ["cookies", "gzip", "brotli", "deflate", "zstd", "charset", "system-proxy", "ws"] }
 wreq-util = { version = "3.0.0-rc.7", features = ["emulation-serde"] }
 
 # WebSocket support
