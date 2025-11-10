@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
+use indexmap::IndexMap;
 use moka::sync::Cache;
 use once_cell::sync::Lazy;
 use serde_json::Value;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Runtime;
@@ -23,7 +23,7 @@ static SESSION_MANAGER: Lazy<SessionManager> = Lazy::new(SessionManager::new);
 pub struct RequestOptions {
     pub url: String,
     pub emulation: Emulation,
-    pub headers: HashMap<String, String>,
+    pub headers: IndexMap<String, String>,
     pub method: String,
     pub body: Option<String>,
     pub proxy: Option<String>,
@@ -36,9 +36,9 @@ pub struct RequestOptions {
 #[derive(Debug, Clone)]
 pub struct Response {
     pub status: u16,
-    pub headers: HashMap<String, String>,
+    pub headers: IndexMap<String, String>,
     pub body: String,
-    pub cookies: HashMap<String, String>,
+    pub cookies: IndexMap<String, String>,
     pub url: String,
 }
 
@@ -184,8 +184,8 @@ async fn make_request_inner(options: RequestOptions) -> Result<Response> {
     };
 
     // Apply custom headers
-    for (key, value) in headers {
-        request = request.header(&key, &value);
+    for (key, value) in headers.iter() {
+        request = request.header(key, value);
     }
 
     // Disable default headers if requested to prevent emulation headers from being appended
@@ -212,7 +212,7 @@ async fn make_request_inner(options: RequestOptions) -> Result<Response> {
     let final_url = response.uri().to_string();
 
     // Extract headers
-    let mut response_headers = HashMap::new();
+    let mut response_headers = IndexMap::new();
     for (key, value) in response.headers() {
         if let Ok(value_str) = value.to_str() {
             response_headers.insert(key.to_string(), value_str.to_string());
@@ -220,7 +220,7 @@ async fn make_request_inner(options: RequestOptions) -> Result<Response> {
     }
 
     // Extract cookies
-    let mut cookies = HashMap::new();
+    let mut cookies = IndexMap::new();
     for cookie in response.cookies() {
         cookies.insert(cookie.name().to_string(), cookie.value().to_string());
     }
