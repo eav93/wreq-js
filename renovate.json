@@ -6,6 +6,7 @@
   "prConcurrentLimit": 10,
   "rangeStrategy": "replace",
   "pinDigests": false,
+  "dependencyDashboard": false,
   "packageRules": [
     {
       "description": "Completely disable version pinning PRs",
