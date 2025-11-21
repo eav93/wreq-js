@@ -1,12 +1,11 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:best-practices", ":disableDependencyDashboard"],
+  "extends": ["config:recommended", ":disableDependencyDashboard"]
   "schedule": ["after 10pm every weekday", "before 5am every weekday"],
   "prHourlyLimit": 2,
   "prConcurrentLimit": 10,
   "rangeStrategy": "replace",
   "pinDigests": false,
-  "dependencyDashboard": false,
   "packageRules": [
     {
       "description": "Completely disable version pinning PRs",
