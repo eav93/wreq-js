@@ -61,7 +61,7 @@ jobs:
 
       - name: Install dependencies for Alpine
         if: matrix.container == 'node:24-alpine'
-        run: apk add --no-cache bash curl git build-base musl-dev cmake perl go clang-dev llvm-dev
+        run: apk add --no-cache bash curl git build-base musl-dev cmake perl go clang-dev clang-static llvm-dev
 
       - name: Setup Node.js
         if: matrix.container == ''
