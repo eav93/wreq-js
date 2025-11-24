@@ -106,9 +106,8 @@ export async function startLocalTestServer(): Promise<LocalTestServer> {
 
     if (path === "/binary") {
       const lengthParam = url.searchParams.get("len");
-      const length = Number.isFinite(Number(lengthParam)) && Number(lengthParam) > 0
-        ? Math.min(Number(lengthParam), 4096)
-        : 256;
+      const length =
+        Number.isFinite(Number(lengthParam)) && Number(lengthParam) > 0 ? Math.min(Number(lengthParam), 4096) : 256;
 
       const payload = Buffer.alloc(length);
 
