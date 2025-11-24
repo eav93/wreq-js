@@ -45,26 +45,20 @@ jobs:
           - os: ubuntu-24.04-arm
             node-version: 24
             arch: arm64
-          # musl tests on Alpine Linux
+          # musl build (cross-compile for Alpine)
           - os: ubuntu-latest
             node-version: 24
             arch: x64
-            container: node:24-alpine
+            target: x86_64-unknown-linux-musl
 
-    name: Test on Node ${{ matrix.node-version }} (${{ matrix.arch }}) - ${{ matrix.os }}
+    name: Test on Node ${{ matrix.node-version }} (${{ matrix.arch }}) - ${{ matrix.os }}${{ matrix.target && format(' [{0}]', matrix.target) || '' }}
     runs-on: ${{ matrix.os }}
-    container: ${{ matrix.container }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6
 
-      - name: Install dependencies for Alpine
-        if: matrix.container == 'node:24-alpine'
-        run: apk add --no-cache bash curl git build-base musl-dev cmake perl go clang-static llvm-dev gcompat libffi-dev
-
       - name: Setup Node.js
-        if: matrix.container == ''
         uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
@@ -73,12 +67,12 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Configure bindgen for Alpine
-        if: matrix.container == 'node:24-alpine'
+      - name: Install musl & clang toolchain (for cross-compiled Alpine build)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
         run: |
-          echo "LIBCLANG_PATH=/usr/lib/llvm20/lib" >> $GITHUB_ENV
-          echo "BINDGEN_EXTRA_CLANG_ARGS=--sysroot=/usr" >> $GITHUB_ENV
-          echo "RUSTFLAGS=-C target-feature=-crt-static" >> $GITHUB_ENV
+          rustup target add x86_64-unknown-linux-musl
+          sudo apt-get update
+          sudo apt-get install -y musl-tools clang llvm-dev libclang-dev pkg-config
 
       - name: Cache Rust dependencies
         uses: actions/cache@v4
@@ -94,12 +88,17 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Build Rust module
-        if: matrix.container == 'node:24-alpine'
+      - name: Build Rust module (musl target for Alpine)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
         env:
-          LIBCLANG_PATH: /usr/lib/llvm20/lib
-          BINDGEN_EXTRA_CLANG_ARGS: --sysroot=/usr
-          RUSTFLAGS: -C target-feature=-crt-static
+          # let bindgen find libclang on Ubuntu
+          LIBCLANG_PATH: /usr/lib/llvm-17/lib
+          # or /usr/lib/llvm-*/lib if you prefer a wildcard; adjust to the actual LLVM version on the runner
+          CARGO_BUILD_TARGET: x86_64-unknown-linux-musl
+        run: npm run build:rust
+
+      - name: Build Rust module (native)
+        if: matrix.target != 'x86_64-unknown-linux-musl'
         run: npm run build:rust
 
       - name: Debug - List built files
