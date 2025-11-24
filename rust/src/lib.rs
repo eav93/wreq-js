@@ -16,8 +16,7 @@ use neon::types::{
 use std::sync::Arc;
 use tokio::sync::{Semaphore, mpsc};
 use websocket::{
-    WS_RUNTIME, WebSocketOptions, connect_websocket, get_connection, remove_connection,
-    store_connection,
+    WebSocketOptions, connect_websocket, get_connection, remove_connection, store_connection,
 };
 use wreq::ws::message::Message;
 use wreq_util::Emulation;
@@ -397,7 +396,7 @@ fn websocket_connect(mut cx: FunctionContext) -> JsResult<JsPromise> {
     let on_close = on_close_opt.map(|f| Arc::new(f.root(&mut cx)));
     let on_error = on_error_opt.map(|f| Arc::new(f.root(&mut cx)));
 
-    WS_RUNTIME.spawn(async move {
+    HTTP_RUNTIME.spawn(async move {
         let result: Result<u64, anyhow::Error> = async {
             let (connection, mut receiver) = connect_websocket(options).await?;
             let id = store_connection(connection);
@@ -583,7 +582,7 @@ fn websocket_send(mut cx: FunctionContext) -> JsResult<JsPromise> {
         return cx.throw_error("Data must be a string or Buffer");
     };
 
-    WS_RUNTIME.spawn(async move {
+    HTTP_RUNTIME.spawn(async move {
         let result = match send_data {
             SendData::Text(text) => connection.send_text(text).await,
             SendData::Binary(data) => connection.send_binary(data).await,
@@ -630,7 +629,7 @@ fn websocket_close(mut cx: FunctionContext) -> JsResult<JsPromise> {
     let (deferred, promise) = cx.promise();
     let settle_channel = cx.channel();
 
-    WS_RUNTIME.spawn(async move {
+    HTTP_RUNTIME.spawn(async move {
         let result = connection.close().await;
 
         // Remove connection from storage after closing

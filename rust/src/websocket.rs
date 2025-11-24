@@ -16,14 +16,6 @@ static WS_CONNECTIONS: Lazy<DashMap<u64, Arc<WsConnection>>> = Lazy::new(DashMap
 
 static NEXT_WS_ID: AtomicU64 = AtomicU64::new(1);
 
-// Global Tokio runtime for WebSocket operations
-pub static WS_RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
-    tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("Failed to create Tokio runtime for WebSockets")
-});
-
 #[derive(Debug, Clone)]
 pub struct WebSocketOptions {
     pub url: String,
