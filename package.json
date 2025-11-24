@@ -19,6 +19,9 @@
     "artifacts": "napi artifacts",
     "clean": "rimraf dist rust/target rust/*.node",
     "test": "npm run build && node dist/test/run-with-local-server.js",
+    "test:coverage": "npm run build && c8 --reporter=html --reporter=text --reporter=lcov node dist/test/run-with-local-server.js",
+    "test:coverage:ci": "npm run build && c8 --reporter=text-summary --reporter=lcov node dist/test/run-with-local-server.js",
+    "test:coverage:report": "c8 report --reporter=text",
     "check": "biome check .",
     "check:fix": "biome check --write .",
     "ci:biome": "biome ci ."
@@ -60,6 +63,7 @@
     "@biomejs/biome": "^2.3.4",
     "@napi-rs/cli": "^3.4.1",
     "@types/node": "^24.10.0",
+    "c8": "^10.1.3",
     "rimraf": "^6.1.0",
     "typescript": "^5.0.0"
   },

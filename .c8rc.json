@@ -1,0 +1,24 @@
+{
+  "all": true,
+  "include": [
+    "dist/**/*.js"
+  ],
+  "exclude": [
+    "dist/test/**",
+    "**/*.spec.js",
+    "**/*.test.js",
+    "**/generated-types.js"
+  ],
+  "reporter": [
+    "text",
+    "html",
+    "lcov"
+  ],
+  "check-coverage": true,
+  "lines": 80,
+  "functions": 75,
+  "branches": 70,
+  "statements": 80,
+  "per-file": false,
+  "skip-full": false
+}
