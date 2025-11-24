@@ -74,6 +74,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools clang llvm-dev libclang-dev pkg-config
 
+          # Provide a fake x86_64-linux-musl-g++ for boring-sys2 / CMake
+          mkdir -p "$HOME/.local/bin"
+          cat > "$HOME/.local/bin/x86_64-linux-musl-g++" << 'EOF'
+          #!/usr/bin/env bash
+          exec x86_64-linux-musl-gcc -xc++ "$@"
+          EOF
+          chmod +x "$HOME/.local/bin/x86_64-linux-musl-g++"
+
+          # Make sure our wrapper is visible before anything else
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
       - name: Cache Rust dependencies
         uses: actions/cache@v4
         with:
