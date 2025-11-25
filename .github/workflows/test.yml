@@ -50,9 +50,9 @@ jobs:
             node-version: 24
             arch: x64
             target: x86_64-unknown-linux-musl
-          - os: ubuntu-24.04-arm
+          - os: ubuntu-latest
             node-version: 24
-            arch: arm64
+            arch: x64
             target: aarch64-unknown-linux-musl
 
     name: Test on Node ${{ matrix.node-version }} (${{ matrix.arch }}) - ${{ matrix.os }}${{ matrix.target && format(' [{0}]', matrix.target) || '' }}
@@ -83,13 +83,17 @@ jobs:
           tar -xzf /tmp/x86_64-linux-musl-cross.tgz -C "$HOME/musl-cross"
           echo "$HOME/musl-cross/x86_64-linux-musl-cross/bin" >> "$GITHUB_PATH"
 
-      - name: Install musl toolchain (aarch64-linux-musl)
+      - name: Install musl cross toolchain (aarch64-linux-musl)
         if: matrix.target == 'aarch64-unknown-linux-musl'
         run: |
           set -eux
           rustup target add aarch64-unknown-linux-musl
-          sudo apt-get update
-          sudo apt-get install -y musl-tools musl-dev
+
+          TOOLCHAIN_URL="https://github.com/troglobit/misc/releases/download/11-20211120/aarch64-linux-musl-cross.tgz"
+          mkdir -p "$HOME/musl-cross"
+          curl -L "$TOOLCHAIN_URL" -o /tmp/aarch64-linux-musl-cross.tgz
+          tar -xzf /tmp/aarch64-linux-musl-cross.tgz -C "$HOME/musl-cross"
+          echo "$HOME/musl-cross/aarch64-linux-musl-cross/bin" >> "$GITHUB_PATH"
 
       - name: Cache Rust dependencies
         uses: actions/cache@v4
@@ -131,13 +135,13 @@ jobs:
           CARGO_BUILD_TARGET: aarch64-unknown-linux-musl
 
           # Tell rustc which linker to use for that target
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-musl-gcc
 
-          # Point boring-sys2 / cc / cmake at the musl toolchain
-          CC_aarch64_unknown_linux_musl: musl-gcc
-          CXX_aarch64_unknown_linux_musl: musl-g++
-          AR_aarch64_unknown_linux_musl: ar
-          RANLIB_aarch64_unknown_linux_musl: ranlib
+          # Point boring-sys2 / cc / cmake at the musl cross toolchain
+          CC_aarch64_unknown_linux_musl: aarch64-linux-musl-gcc
+          CXX_aarch64_unknown_linux_musl: aarch64-linux-musl-g++
+          AR_aarch64_unknown_linux_musl: aarch64-linux-musl-ar
+          RANLIB_aarch64_unknown_linux_musl: aarch64-linux-musl-ranlib
 
           # Optional: keep it static
           RUSTFLAGS: -C target-feature=-crt-static
