@@ -746,6 +746,10 @@ async function dispatchRequest(
  * - TLS connection reuse for performance
  * - Shared connection state
  *
+ * **Concurrency:** The core is unthrottled by design. Callers are expected to implement
+ * their own concurrency control (e.g., p-limit) if needed. Built-in throttling would
+ * reduce performance for high-throughput workloads.
+ *
  * @param input - Request URL (string or URL instance)
  * @param init - Fetch-compatible init options
  *
