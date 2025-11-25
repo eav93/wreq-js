@@ -60,6 +60,10 @@ To query supported profiles:
 import { getProfiles } from 'wreq-js';
 console.log(getProfiles());
 // ['chrome_142', 'firefox_139', 'edge_120', 'safari_18', ...]
+
+import { getOperatingSystems } from 'wreq-js';
+console.log(getOperatingSystems());
+// ['windows', 'macos', 'linux', 'android', 'ios']
 ```
 
 ## Quick Start
@@ -69,6 +73,7 @@ import { fetch } from 'wreq-js';
 
 const response = await fetch('https://example.com/api', {
   browser: 'chrome_142',
+  os: 'windows', // emulate Windows headers/TLS instead of the default macOS
 });
 
 console.log(await response.json());
