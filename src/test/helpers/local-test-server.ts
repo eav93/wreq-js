@@ -138,6 +138,13 @@ export async function startLocalTestServer(): Promise<LocalTestServer> {
       return json(res, { cookies: { ...existingCookies, ...newCookies } });
     }
 
+    if (path === "/redirect") {
+      res.statusCode = 302;
+      res.setHeader("Location", `${resolvedBase}/json`);
+      res.end();
+      return;
+    }
+
     const delayMatch = path.match(/^\/delay\/(\d+)/);
     if (delayMatch) {
       const seconds = Number(delayMatch[1]);

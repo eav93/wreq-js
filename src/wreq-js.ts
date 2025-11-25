@@ -624,7 +624,7 @@ function normalizeUrlInput(input: string | URL): string {
 }
 
 function validateRedirectMode(mode?: WreqRequestInit["redirect"]): void {
-  if (!mode || mode === "follow") {
+  if (mode === undefined || mode === "follow" || mode === "manual" || mode === "error") {
     return;
   }
 
@@ -791,6 +791,7 @@ export async function fetch(input: string | URL, init?: WreqRequestInit): Promis
     ...(body !== undefined && { body }),
     ...(config.proxy !== undefined && { proxy: config.proxy }),
     ...(config.timeout !== undefined && { timeout: config.timeout }),
+    ...(config.redirect !== undefined && { redirect: config.redirect }),
     ...(config.disableDefaultHeaders !== undefined && { disableDefaultHeaders: config.disableDefaultHeaders }),
     sessionId: sessionContext.sessionId,
     ephemeral: sessionContext.dropAfterRequest,
@@ -883,6 +884,10 @@ export async function request(options: RequestOptions): Promise<Response> {
 
   if (rest.disableDefaultHeaders !== undefined) {
     init.disableDefaultHeaders = rest.disableDefaultHeaders;
+  }
+
+  if (rest.redirect !== undefined) {
+    init.redirect = rest.redirect;
   }
 
   return fetch(url, init);

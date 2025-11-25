@@ -74,6 +74,42 @@ describe("HTTP requests", () => {
     assert.ok(response.bodyUsed, "arrayBuffer() should mark the body as used");
   });
 
+  test("follows redirects by default", { skip: !isLocalHttpBase }, async () => {
+    const response = await wreqFetch(httpUrl("/redirect"), {
+      browser: "chrome_142",
+      timeout: 10_000,
+    });
+
+    assert.strictEqual(response.status, 200, "should resolve final redirect target");
+    assert.strictEqual(response.url, httpUrl("/json"));
+    assert.strictEqual(response.redirected, true, "should mark response as redirected");
+  });
+
+  test("returns 3xx response when redirect is manual", { skip: !isLocalHttpBase }, async () => {
+    const response = await wreqFetch(httpUrl("/redirect"), {
+      browser: "chrome_142",
+      redirect: "manual",
+      timeout: 10_000,
+    });
+
+    assert.strictEqual(response.status, 302);
+    assert.strictEqual(response.redirected, false);
+    assert.strictEqual(response.url, httpUrl("/redirect"));
+    assert.strictEqual(response.headers.get("location"), httpUrl("/json"));
+  });
+
+  test("rejects when redirect mode is error", { skip: !isLocalHttpBase }, async () => {
+    await assert.rejects(
+      wreqFetch(httpUrl("/redirect"), {
+        browser: "chrome_142",
+        redirect: "error",
+        timeout: 10_000,
+      }),
+      (error: unknown) => error instanceof Error && /redirect/i.test(error.message),
+      "should reject when redirects are disabled",
+    );
+  });
+
   test("propagates AbortSignal to native I/O", { skip: !isLocalHttpBase }, async () => {
     const controller = new AbortController();
     const hangId = randomUUID();

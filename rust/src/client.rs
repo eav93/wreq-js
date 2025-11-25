@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Runtime;
 use uuid::Uuid;
-use wreq::{Client as HttpClient, Proxy};
+use wreq::{Client as HttpClient, Proxy, redirect};
 use wreq_util::Emulation;
 
 pub static HTTP_RUNTIME: Lazy<Runtime> = Lazy::new(|| {
@@ -19,6 +19,26 @@ pub static HTTP_RUNTIME: Lazy<Runtime> = Lazy::new(|| {
 
 static SESSION_MANAGER: Lazy<SessionManager> = Lazy::new(SessionManager::new);
 
+#[derive(Debug, Clone, Copy, Default)]
+pub enum RedirectMode {
+    #[default]
+    Follow,
+    Manual,
+    Error,
+}
+
+impl RedirectMode {
+    fn as_policy(self) -> redirect::Policy {
+        match self {
+            RedirectMode::Follow => redirect::Policy::default(),
+            RedirectMode::Manual => redirect::Policy::custom(|attempt| attempt.stop()),
+            RedirectMode::Error => redirect::Policy::custom(|attempt| {
+                attempt.error("Redirects are disabled for this request")
+            }),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RequestOptions {
     pub url: String,
@@ -28,6 +48,7 @@ pub struct RequestOptions {
     pub body: Option<Vec<u8>>,
     pub proxy: Option<String>,
     pub timeout: u64,
+    pub redirect: RedirectMode,
     pub session_id: String,
     pub ephemeral: bool,
     pub disable_default_headers: bool,
@@ -160,6 +181,7 @@ async fn make_request_inner(options: RequestOptions) -> Result<Response> {
         method,
         body,
         timeout,
+        redirect,
         disable_default_headers,
         ..
     } = options;
@@ -192,6 +214,9 @@ async fn make_request_inner(options: RequestOptions) -> Result<Response> {
     if disable_default_headers {
         request = request.default_headers(false);
     }
+
+    // Apply redirect policy
+    request = request.redirect(redirect.as_policy());
 
     // Apply body if present
     if let Some(body) = body {

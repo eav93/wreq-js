@@ -4,8 +4,8 @@ mod websocket;
 
 use anyhow::anyhow;
 use client::{
-    HTTP_RUNTIME, RequestOptions, Response, clear_managed_session, create_managed_session,
-    drop_managed_session, generate_session_id, make_request,
+    HTTP_RUNTIME, RedirectMode, RequestOptions, Response, clear_managed_session,
+    create_managed_session, drop_managed_session, generate_session_id, make_request,
 };
 use dashmap::DashMap;
 use futures_util::StreamExt;
@@ -26,8 +26,7 @@ use wreq::ws::message::Message;
 use wreq_util::Emulation;
 
 const WS_EVENT_BUFFER: usize = 64;
-static REQUEST_CANCELLATIONS: Lazy<DashMap<u64, CancellationToken>> =
-    Lazy::new(DashMap::new);
+static REQUEST_CANCELLATIONS: Lazy<DashMap<u64, CancellationToken>> = Lazy::new(DashMap::new);
 
 // Parse browser string to Emulation enum using serde
 fn parse_emulation(browser: &str) -> Emulation {
@@ -180,6 +179,20 @@ fn js_object_to_request_options(
         .map(|v| v.value(cx) as u64)
         .unwrap_or(30000);
 
+    // Get redirect policy (optional, defaults to follow)
+    let redirect = obj
+        .get_opt(cx, "redirect")?
+        .and_then(|v: Handle<JsValue>| v.downcast::<JsString, _>(cx).ok())
+        .map(|v| v.value(cx))
+        .unwrap_or_else(|| "follow".to_string());
+
+    let redirect = match redirect.as_str() {
+        "follow" => RedirectMode::Follow,
+        "manual" => RedirectMode::Manual,
+        "error" => RedirectMode::Error,
+        other => return cx.throw_type_error(format!("Unsupported redirect mode: {}", other)),
+    };
+
     // Get sessionId (optional)
     let session_id = obj
         .get_opt(cx, "sessionId")?
@@ -208,6 +221,7 @@ fn js_object_to_request_options(
         body,
         proxy,
         timeout,
+        redirect,
         session_id,
         ephemeral,
         disable_default_headers,

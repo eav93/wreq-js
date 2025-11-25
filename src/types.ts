@@ -246,6 +246,12 @@ export interface RequestOptions {
   proxy?: string;
 
   /**
+   * Redirect policy applied to this request. Matches the `redirect` option accepted by {@link fetch}.
+   * @default "follow"
+   */
+  redirect?: "follow" | "manual" | "error";
+
+  /**
    * Request timeout in milliseconds. If the request takes longer than this value,
    * it will be aborted.
    * @default 30000
