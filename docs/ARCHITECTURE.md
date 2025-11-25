@@ -5,11 +5,10 @@
 ```
 ┌─────────────────────────────────────┐
 │  JavaScript/TypeScript Code         │
-│  request({ url, browser })          │
 └──────────────┬──────────────────────┘
                ↓
 ┌──────────────────────────────────────┐
-│  TypeScript Wrapper (index.ts)       │
+│  TypeScript Wrapper (wreq-js.ts)     │
 │  - Validate inputs                   │
 │  - Convert to options object         │
 └──────────────┬───────────────────────┘
@@ -48,28 +47,6 @@
 │  - PRIORITY streams                  │
 │  - Header ordering                   │
 └──────────────────────────────────────┘
-```
-
-## Performance Tuning
-
-### Connection Reuse
-
-The client automatically reuses connections (HTTP/2 keep-alive).
-
-### Parallel Requests
-
-```typescript
-// Good: Parallel requests
-const [res1, res2, res3] = await Promise.all([
-  request({ url: url1 }),
-  request({ url: url2 }),
-  request({ url: url3 }),
-]);
-
-// Bad: Sequential requests
-const res1 = await request({ url: url1 });
-const res2 = await request({ url: url2 });
-const res3 = await request({ url: url3 });
 ```
 
 ## References

@@ -185,7 +185,6 @@ interface RequestInit {
 
 - **[Architecture Guide](docs/ARCHITECTURE.md)** - How fingerprinting and impersonation work  
 - **[Build Instructions](docs/BUILD.md)** - Build from source  
-- **[Publishing Guide](docs/PUBLISHING.md)** - Releasing new versions
 
 ## Contributing
 
