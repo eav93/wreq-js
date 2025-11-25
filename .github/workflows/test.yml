@@ -45,11 +45,15 @@ jobs:
           - os: ubuntu-24.04-arm
             node-version: 24
             arch: arm64
-          # musl build (cross-compile for Alpine)
+          # musl builds (cross-compile for Alpine)
           - os: ubuntu-latest
             node-version: 24
             arch: x64
             target: x86_64-unknown-linux-musl
+          - os: ubuntu-24.04-arm
+            node-version: 24
+            arch: arm64
+            target: aarch64-unknown-linux-musl
 
     name: Test on Node ${{ matrix.node-version }} (${{ matrix.arch }}) - ${{ matrix.os }}${{ matrix.target && format(' [{0}]', matrix.target) || '' }}
     runs-on: ${{ matrix.os }}
@@ -79,6 +83,18 @@ jobs:
           tar -xzf /tmp/x86_64-linux-musl-cross.tgz -C "$HOME/musl-cross"
           echo "$HOME/musl-cross/x86_64-linux-musl-cross/bin" >> "$GITHUB_PATH"
 
+      - name: Install musl cross toolchain (aarch64-linux-musl)
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: |
+          set -eux
+          rustup target add aarch64-unknown-linux-musl
+
+          TOOLCHAIN_URL="https://github.com/troglobit/misc/releases/download/11-20211120/aarch64-linux-musl-cross.tgz"
+          mkdir -p "$HOME/musl-cross"
+          curl -L "$TOOLCHAIN_URL" -o /tmp/aarch64-linux-musl-cross.tgz
+          tar -xzf /tmp/aarch64-linux-musl-cross.tgz -C "$HOME/musl-cross"
+          echo "$HOME/musl-cross/aarch64-linux-musl-cross/bin" >> "$GITHUB_PATH"
+
       - name: Cache Rust dependencies
         uses: actions/cache@v4
         with:
@@ -93,7 +109,7 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Build Rust module (musl target)
+      - name: Build Rust module (x86_64 musl target)
         if: matrix.target == 'x86_64-unknown-linux-musl'
         env:
           # Tell Cargo what we are targeting
@@ -112,8 +128,27 @@ jobs:
           RUSTFLAGS: -C target-feature=-crt-static
         run: npm run build:rust
 
+      - name: Build Rust module (aarch64 musl target)
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        env:
+          # Tell Cargo what we are targeting
+          CARGO_BUILD_TARGET: aarch64-unknown-linux-musl
+
+          # Tell rustc which linker to use for that target
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-musl-gcc
+
+          # Point boring-sys2 / cc / cmake at the musl cross toolchain
+          CC_aarch64_unknown_linux_musl: aarch64-linux-musl-gcc
+          CXX_aarch64_unknown_linux_musl: aarch64-linux-musl-g++
+          AR_aarch64_unknown_linux_musl: aarch64-linux-musl-ar
+          RANLIB_aarch64_unknown_linux_musl: aarch64-linux-musl-ranlib
+
+          # Optional: keep it static
+          RUSTFLAGS: -C target-feature=-crt-static
+        run: npm run build:rust
+
       - name: Build Rust module (native)
-        if: matrix.target != 'x86_64-unknown-linux-musl'
+        if: matrix.target != 'x86_64-unknown-linux-musl' && matrix.target != 'aarch64-unknown-linux-musl'
         run: npm run build:rust
 
       - name: Debug - List built files
