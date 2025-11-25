@@ -1,7 +1,13 @@
 import assert from "node:assert";
+import { randomUUID } from "node:crypto";
 import { describe, test } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { fetch as wreqFetch } from "../../wreq-js";
 import { httpUrl } from "../helpers/http";
+
+const isLocalHttpBase =
+  (process.env.HTTP_TEST_BASE_URL ?? "").includes("127.0.0.1") ||
+  (process.env.HTTP_TEST_BASE_URL ?? "").includes("localhost");
 
 describe("HTTP requests", () => {
   test("performs a basic GET request", async () => {
@@ -66,5 +72,34 @@ describe("HTTP requests", () => {
       assert.strictEqual(buf[i], i % 256, "binary response should preserve byte order");
     }
     assert.ok(response.bodyUsed, "arrayBuffer() should mark the body as used");
+  });
+
+  test("propagates AbortSignal to native I/O", { skip: !isLocalHttpBase }, async () => {
+    const controller = new AbortController();
+    const hangId = randomUUID();
+
+    const requestPromise = wreqFetch(httpUrl(`/hang?id=${hangId}`), {
+      browser: "chrome_142",
+      timeout: 10_000,
+      signal: controller.signal,
+    });
+
+    setTimeout(() => controller.abort("test abort"), 50);
+
+    await assert.rejects(
+      requestPromise,
+      (error: unknown) => error instanceof Error && error.name === "AbortError",
+      "fetch should reject with AbortError when aborted",
+    );
+
+    await delay(25);
+
+    const statusResponse = await wreqFetch(httpUrl(`/hang/status?id=${hangId}`), {
+      browser: "chrome_142",
+      timeout: 5_000,
+    });
+
+    const status = await statusResponse.json<{ closed: boolean }>();
+    assert.strictEqual(status.closed, true, "server should observe connection close after abort");
   });
 });

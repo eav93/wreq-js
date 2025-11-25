@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import { STATUS_CODES } from "node:http";
 import type {
   BodyInit,
@@ -33,7 +33,8 @@ interface NativeSessionOptions {
 }
 
 let nativeBinding: {
-  request: (options: RequestOptions) => Promise<NativeResponse>;
+  request: (options: RequestOptions, requestId: number) => Promise<NativeResponse>;
+  cancelRequest: (requestId: number) => void;
   getProfiles: () => string[];
   websocketConnect: (options: NativeWebSocketOptions) => Promise<NativeWebSocketConnection>;
   websocketSend: (ws: NativeWebSocketConnection, data: string | Buffer) => Promise<void>;
@@ -571,29 +572,37 @@ function isAbortError(error: unknown): error is Error {
   return Boolean(error) && typeof (error as Error).name === "string" && (error as Error).name === "AbortError";
 }
 
-function setupAbort(signal?: AbortSignal | null): AbortHandler | null {
+function generateRequestId(): number {
+  // Stay within Node's randomInt upper bound (2^48) and JS double precision.
+  const maxExclusive = 2 ** 48;
+  return randomInt(1, maxExclusive);
+}
+
+function setupAbort(signal: AbortSignal | null | undefined, cancelNative: () => void): AbortHandler | null {
   if (!signal) {
     return null;
   }
 
   if (signal.aborted) {
+    cancelNative();
     throw createAbortError(signal.reason);
   }
 
-  let onAbort: (() => void) | undefined;
+  let onAbortListener: (() => void) | undefined;
 
   const promise = new Promise<never>((_, reject) => {
-    onAbort = () => {
+    onAbortListener = () => {
+      cancelNative();
       reject(createAbortError(signal.reason));
     };
 
-    signal.addEventListener("abort", onAbort, { once: true });
+    signal.addEventListener("abort", onAbortListener, { once: true });
   });
 
   const cleanup = () => {
-    if (onAbort) {
-      signal.removeEventListener("abort", onAbort);
-      onAbort = undefined;
+    if (onAbortListener) {
+      signal.removeEventListener("abort", onAbortListener);
+      onAbortListener = undefined;
     }
   };
 
@@ -691,8 +700,17 @@ async function dispatchRequest(
   requestUrl: string,
   signal?: AbortSignal | null,
 ): Promise<Response> {
-  const abortHandler = setupAbort(signal);
-  const nativePromise = nativeBinding.request(options);
+  const requestId = generateRequestId();
+  const cancelNative = () => {
+    try {
+      nativeBinding.cancelRequest(requestId);
+    } catch {
+      // Cancellation is best-effort; ignore binding errors here.
+    }
+  };
+
+  const abortHandler = setupAbort(signal, cancelNative);
+  const nativePromise = nativeBinding.request(options, requestId);
   const pending = abortHandler ? Promise.race([nativePromise, abortHandler.promise]) : nativePromise;
 
   let payload: NativeResponse;

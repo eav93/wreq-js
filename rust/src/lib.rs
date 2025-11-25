@@ -2,10 +2,12 @@ mod client;
 mod generated_profiles;
 mod websocket;
 
+use anyhow::anyhow;
 use client::{
     HTTP_RUNTIME, RequestOptions, Response, clear_managed_session, create_managed_session,
     drop_managed_session, generate_session_id, make_request,
 };
+use dashmap::DashMap;
 use futures_util::StreamExt;
 use indexmap::IndexMap;
 use neon::prelude::*;
@@ -13,8 +15,10 @@ use neon::types::{
     JsArray, JsBoolean, JsBuffer, JsNull, JsObject, JsString, JsUndefined, JsValue,
     buffer::TypedArray,
 };
+use once_cell::sync::Lazy;
 use std::sync::Arc;
 use tokio::sync::{Semaphore, mpsc};
+use tokio_util::sync::CancellationToken;
 use websocket::{
     WebSocketOptions, connect_websocket, get_connection, remove_connection, store_connection,
 };
@@ -22,6 +26,8 @@ use wreq::ws::message::Message;
 use wreq_util::Emulation;
 
 const WS_EVENT_BUFFER: usize = 64;
+static REQUEST_CANCELLATIONS: Lazy<DashMap<u64, CancellationToken>> =
+    Lazy::new(DashMap::new);
 
 // Parse browser string to Emulation enum using serde
 fn parse_emulation(browser: &str) -> Emulation {
@@ -250,16 +256,24 @@ fn response_to_js_object<'a, C: Context<'a>>(
 fn request(mut cx: FunctionContext) -> JsResult<JsPromise> {
     // Get the options object
     let options_obj = cx.argument::<JsObject>(0)?;
+    let request_id = cx.argument::<JsNumber>(1)?.value(&mut cx) as u64;
 
     // Convert JS object to Rust struct
     let options = js_object_to_request_options(&mut cx, options_obj)?;
+    let token = CancellationToken::new();
+    REQUEST_CANCELLATIONS.insert(request_id, token.clone());
 
     // Create a promise
     let (deferred, promise) = cx.promise();
     let settle_channel = cx.channel();
 
     HTTP_RUNTIME.spawn(async move {
-        let result = make_request(options).await;
+        let result = tokio::select! {
+            _ = token.cancelled() => Err(anyhow!("Request aborted")),
+            res = make_request(options) => res,
+        };
+
+        REQUEST_CANCELLATIONS.remove(&request_id);
 
         // Send result back to JS
         deferred.settle_with(&settle_channel, move |mut cx| match result {
@@ -340,6 +354,16 @@ fn clear_session(mut cx: FunctionContext) -> JsResult<JsUndefined> {
 fn drop_session(mut cx: FunctionContext) -> JsResult<JsUndefined> {
     let session_id = cx.argument::<JsString>(0)?.value(&mut cx);
     drop_managed_session(&session_id);
+    Ok(cx.undefined())
+}
+
+fn cancel_request(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+    let request_id = cx.argument::<JsNumber>(0)?.value(&mut cx) as u64;
+
+    if let Some((_, token)) = REQUEST_CANCELLATIONS.remove(&request_id) {
+        token.cancel();
+    }
+
     Ok(cx.undefined())
 }
 
@@ -649,6 +673,7 @@ fn websocket_close(mut cx: FunctionContext) -> JsResult<JsPromise> {
 #[neon::main]
 fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("request", request)?;
+    cx.export_function("cancelRequest", cancel_request)?;
     cx.export_function("getProfiles", get_profiles)?;
     cx.export_function("createSession", create_session)?;
     cx.export_function("clearSession", clear_session)?;
