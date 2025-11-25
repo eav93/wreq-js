@@ -116,6 +116,40 @@ const res = await fetch('https://api.example.com/submit', {
 });
 ```
 
+### Streaming Responses
+
+The `Response` object supports streaming via the standard `body` property, which returns a `ReadableStream<Uint8Array>`. This allows you to process large responses incrementally without loading the entire body into memory.
+
+```typescript
+const response = await fetch('https://example.com/large-file', {
+  browser: 'chrome_142',
+});
+
+// Access the body stream
+const stream = response.body;
+if (stream) {
+  const reader = stream.getReader();
+
+  while (true) {
+    const { done, value } = await reader.read();
+
+    if (done) {
+      break;
+    }
+
+    // Process chunk (value is Uint8Array)
+    console.log(`Received ${value.byteLength} bytes`);
+  }
+}
+```
+
+**Key behaviors:**
+- The `body` property is lazily initialized - it returns `null` for empty responses or a `ReadableStream` for non-empty responses
+- Accessing `response.body` does **not** mark it as consumed - only reading from the stream does
+- The `bodyUsed` flag becomes `true` only when you start reading from the stream
+- You can call `response.clone()` to create a duplicate response before the body is consumed
+- Once consumed via `json()`, `text()`, `arrayBuffer()`, or stream reading, the body cannot be read again
+
 ## Session & Cookie Isolation
 
 Each `fetch()` call runs in **ephemeral mode** so that TLS caches, cookies, and session data never leak across requests.
