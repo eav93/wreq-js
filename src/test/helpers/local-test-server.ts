@@ -14,6 +14,7 @@ export interface LocalTestServer {
 export async function startLocalTestServer(): Promise<LocalTestServer> {
   let baseUrl = "http://127.0.0.1";
   const sockets = new Set<Socket>();
+  const hangingRequests = new Map<string, { closed: boolean }>();
 
   const server = createServer(async (req, res) => {
     try {
@@ -142,6 +143,39 @@ export async function startLocalTestServer(): Promise<LocalTestServer> {
       const seconds = Number(delayMatch[1]);
       await delay(seconds * 1000);
       return json(res, { delayed: seconds, ...createEchoPayload(req, url) });
+    }
+
+    if (path === "/hang") {
+      const id = url.searchParams.get("id");
+
+      if (!id) {
+        res.statusCode = 400;
+        return json(res, { error: "id query param required" });
+      }
+
+      const state = { closed: false };
+      hangingRequests.set(id, state);
+
+      const markClosed = () => {
+        state.closed = true;
+      };
+
+      req.socket.on("close", markClosed);
+      req.socket.on("error", markClosed);
+      return;
+    }
+
+    if (path === "/hang/status") {
+      const id = url.searchParams.get("id");
+
+      if (!id) {
+        res.statusCode = 400;
+        return json(res, { error: "id query param required" });
+      }
+
+      const closed = hangingRequests.get(id)?.closed ?? false;
+      hangingRequests.delete(id);
+      return json(res, { closed });
     }
 
     res.statusCode = 404;
