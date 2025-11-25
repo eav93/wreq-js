@@ -294,9 +294,15 @@ export interface NativeResponse {
   headers: Record<string, string>;
 
   /**
-   * Raw response body as a Node.js Buffer.
+   * Handle for streaming response body chunks from the native layer.
+   * When `null`, the response does not have a body (e.g., HEAD/204/304).
    */
-  body: Buffer;
+  bodyHandle: number | null;
+
+  /**
+   * Optional Content-Length hint reported by the server after decompression.
+   */
+  contentLength: number | null;
 
   /**
    * Cookies set by the server as key-value pairs.

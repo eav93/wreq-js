@@ -1,5 +1,6 @@
 import { randomInt, randomUUID } from "node:crypto";
 import { STATUS_CODES } from "node:http";
+import { ReadableStream } from "node:stream/web";
 import type {
   BodyInit,
   BrowserProfile,
@@ -35,6 +36,8 @@ interface NativeSessionOptions {
 let nativeBinding: {
   request: (options: RequestOptions, requestId: number) => Promise<NativeResponse>;
   cancelRequest: (requestId: number) => void;
+  readBodyChunk: (handleId: number) => Promise<Buffer | null>;
+  cancelBody: (handleId: number) => void;
   getProfiles: () => string[];
   websocketConnect: (options: NativeWebSocketOptions) => Promise<NativeWebSocketConnection>;
   websocketSend: (ws: NativeWebSocketConnection, data: string | Buffer) => Promise<void>;
@@ -100,6 +103,24 @@ const websocketFinalizer =
   typeof FinalizationRegistry === "function"
     ? new FinalizationRegistry<NativeWebSocketConnection>((connection: NativeWebSocketConnection) => {
         void nativeBinding.websocketClose(connection).catch(() => undefined);
+      })
+    : undefined;
+
+type NativeBodyHandle = { id: number; released: boolean };
+
+const bodyHandleFinalizer =
+  typeof FinalizationRegistry === "function"
+    ? new FinalizationRegistry<NativeBodyHandle>((handle: NativeBodyHandle) => {
+        if (handle.released) {
+          return;
+        }
+
+        handle.released = true;
+        try {
+          nativeBinding.cancelBody(handle.id);
+        } catch {
+          // Best-effort cleanup; ignore binding-level failures.
+        }
       })
     : undefined;
 
@@ -318,10 +339,90 @@ function cloneNativeResponse(payload: NativeResponse): NativeResponse {
   return {
     status: payload.status,
     headers: { ...payload.headers },
-    body: payload.body,
+    bodyHandle: payload.bodyHandle,
+    contentLength: payload.contentLength,
     cookies: { ...payload.cookies },
     url: payload.url,
   };
+}
+
+function releaseNativeBody(handle: NativeBodyHandle): void {
+  if (handle.released) {
+    return;
+  }
+
+  handle.released = true;
+
+  try {
+    nativeBinding.cancelBody(handle.id);
+  } catch {
+    // Best-effort cleanup; ignore binding errors.
+  }
+
+  bodyHandleFinalizer?.unregister(handle);
+}
+
+function createNativeBodyStream(handleId: number): ReadableStream<Uint8Array> {
+  const handle: NativeBodyHandle = { id: handleId, released: false };
+
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const chunk = await nativeBinding.readBodyChunk(handle.id);
+
+        if (chunk === null) {
+          releaseNativeBody(handle);
+          controller.close();
+          return;
+        }
+
+        controller.enqueue(new Uint8Array(chunk));
+      } catch (error) {
+        releaseNativeBody(handle);
+        controller.error(error);
+      }
+    },
+    cancel() {
+      releaseNativeBody(handle);
+    },
+  });
+
+  bodyHandleFinalizer?.register(stream, handle, handle);
+
+  return stream;
+}
+
+function wrapBodyStream(
+  source: ReadableStream<Uint8Array>,
+  onFirstUse: () => void,
+): ReadableStream<Uint8Array> {
+  let started = false;
+  const reader = source.getReader();
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (!started) {
+        started = true;
+        onFirstUse();
+      }
+
+      try {
+        const { done, value } = await reader.read();
+
+        if (done) {
+          controller.close();
+          return;
+        }
+
+        controller.enqueue(value);
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
 }
 
 export class Response {
@@ -329,17 +430,19 @@ export class Response {
   readonly statusText: string;
   readonly ok: boolean;
   readonly headers: Headers;
+  readonly contentLength: number | null;
   readonly url: string;
   readonly redirected: boolean;
   readonly type: ResponseType = "basic";
   readonly cookies: Record<string, string>;
-  readonly body: Buffer;
   bodyUsed = false;
 
   private readonly payload: NativeResponse;
   private readonly requestUrl: string;
+  private bodySource: ReadableStream<Uint8Array> | null;
+  private bodyStream: ReadableStream<Uint8Array> | null | undefined;
 
-  constructor(payload: NativeResponse, requestUrl: string) {
+  constructor(payload: NativeResponse, requestUrl: string, bodySource?: ReadableStream<Uint8Array> | null) {
     this.payload = cloneNativeResponse(payload);
     this.requestUrl = requestUrl;
     this.status = this.payload.status;
@@ -349,7 +452,31 @@ export class Response {
     this.url = this.payload.url;
     this.redirected = this.url !== requestUrl;
     this.cookies = { ...this.payload.cookies };
-    this.body = this.payload.body;
+    this.contentLength = this.payload.contentLength ?? null;
+
+    if (typeof bodySource !== "undefined") {
+      this.bodySource = bodySource;
+    } else if (this.payload.bodyHandle !== null) {
+      this.bodySource = createNativeBodyStream(this.payload.bodyHandle);
+    } else {
+      this.bodySource = null;
+    }
+
+    this.bodyStream = undefined;
+  }
+
+  get body(): ReadableStream<Uint8Array> | null {
+    if (this.bodySource === null) {
+      return null;
+    }
+
+    if (this.bodyStream === undefined) {
+      this.bodyStream = wrapBodyStream(this.bodySource, () => {
+        this.bodyUsed = true;
+      });
+    }
+
+    return this.bodyStream;
   }
 
   async json<T = unknown>(): Promise<T> {
@@ -358,7 +485,7 @@ export class Response {
   }
 
   async arrayBuffer(): Promise<ArrayBuffer> {
-    const bytes = this.consumeBody();
+    const bytes = await this.consumeBody();
     const { buffer, byteOffset, byteLength } = bytes;
 
     if (buffer instanceof ArrayBuffer) {
@@ -371,17 +498,27 @@ export class Response {
   }
 
   async text(): Promise<string> {
-    const bytes = this.consumeBody();
+    const bytes = await this.consumeBody();
     const decoder = new TextDecoder("utf-8");
     return decoder.decode(bytes);
   }
 
   clone(): Response {
-    if (this.bodyUsed) {
+    if (this.bodyUsed || this.bodyStream) {
       throw new TypeError("Cannot clone a Response whose body is already used");
     }
 
-    return new Response(cloneNativeResponse(this.payload), this.requestUrl);
+    if (this.bodySource === null) {
+      return new Response(cloneNativeResponse(this.payload), this.requestUrl, null);
+    }
+
+    const [branchA, branchB] = this.bodySource.tee();
+
+    // Reset cached stream so the original response uses the new branch lazily.
+    this.bodySource = branchA;
+    this.bodyStream = undefined;
+
+    return new Response(cloneNativeResponse(this.payload), this.requestUrl, branchB);
   }
 
   private assertBodyAvailable(): void {
@@ -390,10 +527,35 @@ export class Response {
     }
   }
 
-  private consumeBody(): Buffer {
+  private async consumeBody(): Promise<Buffer> {
     this.assertBodyAvailable();
     this.bodyUsed = true;
-    return this.body;
+
+    const stream = this.body;
+    if (!stream) {
+      return Buffer.alloc(0);
+    }
+
+    const reader = stream.getReader();
+    const chunks: Buffer[] = [];
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+
+        if (value && value.byteLength > 0) {
+          chunks.push(Buffer.from(value));
+        }
+      }
+    } finally {
+      // reader.releaseLock() is unnecessary here; letting the stream close naturally
+      // ensures the underlying native handle is released.
+    }
+
+    return chunks.length === 0 ? Buffer.alloc(0) : Buffer.concat(chunks);
   }
 }
 
