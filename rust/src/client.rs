@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Runtime;
 use uuid::Uuid;
-use wreq::{Client as HttpClient, Proxy, redirect};
+use wreq::{Client as HttpClient, Method, Proxy, redirect};
 use wreq_util::Emulation;
 
 pub static HTTP_RUNTIME: Lazy<Runtime> = Lazy::new(|| {
@@ -194,16 +194,22 @@ async fn make_request_inner(options: RequestOptions) -> Result<Response> {
 
     let method_upper = method.to_uppercase();
 
-    // Build request
-    let mut request = match method_upper.as_str() {
-        "GET" => client.get(&url),
-        "POST" => client.post(&url),
-        "PUT" => client.put(&url),
-        "DELETE" => client.delete(&url),
-        "PATCH" => client.patch(&url),
-        "HEAD" => client.head(&url),
-        _ => return Err(anyhow::anyhow!("Unsupported HTTP method: {}", method_upper)),
+    let request_method = match method_upper.as_str() {
+        "GET" => Method::GET,
+        "POST" => Method::POST,
+        "PUT" => Method::PUT,
+        "DELETE" => Method::DELETE,
+        "PATCH" => Method::PATCH,
+        "HEAD" => Method::HEAD,
+        "OPTIONS" => Method::OPTIONS,
+        "CONNECT" => Method::CONNECT,
+        "TRACE" => Method::TRACE,
+        _ => Method::from_bytes(method_upper.as_bytes())
+            .with_context(|| format!("Unsupported HTTP method: {}", method_upper))?,
     };
+
+    // Build request
+    let mut request = client.request(request_method, &url);
 
     // Apply custom headers
     for (key, value) in headers.iter() {

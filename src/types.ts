@@ -183,12 +183,6 @@ export interface CreateSessionOptions {
 }
 
 /**
- * Standard HTTP request methods supported by wreq.
- * Represents the most commonly used HTTP verbs for RESTful operations.
- */
-export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD";
-
-/**
  * Legacy request options interface. This interface is deprecated and will be removed in a future version.
  *
  * @deprecated Use {@link RequestInit} with the standard `fetch()` API instead.
@@ -226,7 +220,7 @@ export interface RequestOptions {
    * HTTP method to use for the request.
    * @default 'GET'
    */
-  method?: HttpMethod;
+  method?: string;
 
   /**
    * Additional headers to send with the request.

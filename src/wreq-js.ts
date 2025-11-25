@@ -659,18 +659,9 @@ function serializeBody(body?: BodyInit | null): Buffer | undefined {
   throw new TypeError("Unsupported body type; expected string, Buffer, ArrayBuffer, or URLSearchParams");
 }
 
-const SUPPORTED_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"] as const;
-type SupportedMethod = (typeof SUPPORTED_METHODS)[number];
-
 function ensureMethod(method?: string): string {
   const normalized = method?.trim().toUpperCase();
   return normalized && normalized.length > 0 ? normalized : "GET";
-}
-
-function assertSupportedMethod(method: string): asserts method is SupportedMethod {
-  if (!SUPPORTED_METHODS.includes(method as SupportedMethod)) {
-    throw new RequestError(`Unsupported HTTP method: ${method}`);
-  }
 }
 
 function ensureBodyAllowed(method: string, body?: Buffer): void {
@@ -775,7 +766,6 @@ export async function fetch(input: string | URL, init?: WreqRequestInit): Promis
 
   const headers = new Headers(config.headers);
   const method = ensureMethod(config.method);
-  assertSupportedMethod(method);
   const body = serializeBody(config.body ?? null);
 
   ensureBodyAllowed(method, body);
@@ -1063,7 +1053,6 @@ export type {
   CookieMode,
   CreateSessionOptions,
   HeadersInit,
-  HttpMethod,
   RequestInit,
   RequestOptions,
   SessionHandle,
