@@ -1,11 +1,17 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
+use bytes::Bytes;
+use dashmap::DashMap;
+use futures_util::{Stream, StreamExt};
 use indexmap::IndexMap;
 use moka::sync::Cache;
 use once_cell::sync::Lazy;
 use serde_json::Value;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Runtime;
+use tokio::sync::Mutex;
 use uuid::Uuid;
 use wreq::{Client as HttpClient, Method, Proxy, redirect};
 use wreq_util::Emulation;
@@ -58,9 +64,10 @@ pub struct RequestOptions {
 pub struct Response {
     pub status: u16,
     pub headers: IndexMap<String, String>,
-    pub body: Vec<u8>,
+    pub body_handle: Option<u64>,
     pub cookies: IndexMap<String, String>,
     pub url: String,
+    pub content_length: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -101,6 +108,49 @@ struct SessionEntry {
 
 struct SessionManager {
     cache: Cache<String, Arc<SessionEntry>>,
+}
+
+pub type ResponseBodyStream =
+    Pin<Box<dyn Stream<Item = wreq::Result<Bytes>> + Send>>;
+
+static BODY_STREAMS: Lazy<DashMap<u64, Arc<Mutex<ResponseBodyStream>>>> =
+    Lazy::new(DashMap::new);
+static NEXT_BODY_HANDLE: AtomicU64 = AtomicU64::new(1);
+
+fn next_body_handle() -> u64 {
+    NEXT_BODY_HANDLE.fetch_add(1, Ordering::Relaxed)
+}
+
+pub fn store_body_stream(stream: ResponseBodyStream) -> u64 {
+    let handle = next_body_handle();
+    BODY_STREAMS.insert(handle, Arc::new(Mutex::new(stream)));
+    handle
+}
+
+pub async fn read_body_chunk(handle: u64) -> Result<Option<Bytes>> {
+    let stream = BODY_STREAMS
+        .get(&handle)
+        .map(|entry| entry.value().clone())
+        .ok_or_else(|| anyhow!("Body handle {} not found", handle))?;
+
+    let mut guard = stream.lock().await;
+    let next = guard.next().await;
+
+    match next {
+        Some(Ok(bytes)) => Ok(Some(bytes)),
+        Some(Err(err)) => {
+            BODY_STREAMS.remove(&handle);
+            Err(err.into())
+        }
+        None => {
+            BODY_STREAMS.remove(&handle);
+            Ok(None)
+        }
+    }
+}
+
+pub fn drop_body_stream(handle: u64) {
+    BODY_STREAMS.remove(&handle);
 }
 
 impl SessionManager {
@@ -256,19 +306,23 @@ async fn make_request_inner(options: RequestOptions) -> Result<Response> {
         cookies.insert(cookie.name().to_string(), cookie.value().to_string());
     }
 
-    // Get body as raw bytes to preserve binary data
-    let body = response
-        .bytes()
-        .await
-        .context("Failed to read response body")?
-        .to_vec();
+    let content_length = response.content_length();
+    let allows_body = response_allows_body(status, method_upper.as_str());
+
+    let body_handle = if allows_body {
+        let stream: ResponseBodyStream = Box::pin(response.bytes_stream());
+        Some(store_body_stream(stream))
+    } else {
+        None
+    };
 
     Ok(Response {
         status,
         headers: response_headers,
-        body,
+        body_handle,
         cookies,
         url: final_url,
+        content_length,
     })
 }
 
@@ -291,6 +345,17 @@ fn emulation_label(emulation: &Emulation) -> String {
     match serde_json::to_value(emulation) {
         Ok(Value::String(label)) => label,
         _ => "chrome_142".to_string(),
+    }
+}
+
+fn response_allows_body(status: u16, method: &str) -> bool {
+    if method.eq_ignore_ascii_case("HEAD") {
+        return false;
+    }
+
+    match status {
+        101 | 204 | 205 | 304 => false,
+        _ => true,
     }
 }
 

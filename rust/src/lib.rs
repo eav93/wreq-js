@@ -5,7 +5,8 @@ mod websocket;
 use anyhow::anyhow;
 use client::{
     HTTP_RUNTIME, RedirectMode, RequestOptions, Response, clear_managed_session,
-    create_managed_session, drop_managed_session, generate_session_id, make_request,
+    create_managed_session, drop_body_stream, drop_managed_session, generate_session_id,
+    make_request, read_body_chunk as native_read_body_chunk,
 };
 use dashmap::DashMap;
 use futures_util::StreamExt;
@@ -259,9 +260,26 @@ fn response_to_js_object<'a, C: Context<'a>>(
     }
     obj.set(cx, "cookies", cookies_obj)?;
 
-    // Body (as Buffer)
-    let body = JsBuffer::from_slice(cx, &response.body)?;
-    obj.set(cx, "body", body)?;
+    // Body handle for streaming
+    match response.body_handle {
+        Some(handle) => {
+            let handle_num = cx.number(handle as f64);
+            obj.set(cx, "bodyHandle", handle_num)?;
+        }
+        None => {
+            let null_value = cx.null();
+            obj.set(cx, "bodyHandle", null_value)?;
+        }
+    }
+
+    // Content-Length hint (if known)
+    if let Some(len) = response.content_length {
+        let len_num = cx.number(len as f64);
+        obj.set(cx, "contentLength", len_num)?;
+    } else {
+        let null_value = cx.null();
+        obj.set(cx, "contentLength", null_value)?;
+    }
 
     Ok(obj)
 }
@@ -378,6 +396,38 @@ fn cancel_request(mut cx: FunctionContext) -> JsResult<JsUndefined> {
         token.cancel();
     }
 
+    Ok(cx.undefined())
+}
+
+fn read_body_chunk(mut cx: FunctionContext) -> JsResult<JsPromise> {
+    let handle_id = cx.argument::<JsNumber>(0)?.value(&mut cx) as u64;
+
+    let (deferred, promise) = cx.promise();
+    let settle_channel = cx.channel();
+
+    HTTP_RUNTIME.spawn(async move {
+        let result = native_read_body_chunk(handle_id).await;
+
+        deferred.settle_with(&settle_channel, move |mut cx| match result {
+            Ok(Some(bytes)) => {
+                let buffer = JsBuffer::from_slice(&mut cx, &bytes)?;
+                let value: Handle<JsValue> = buffer.upcast();
+                Ok(value)
+            }
+            Ok(None) => Ok(cx.null().upcast()),
+            Err(e) => {
+                let error_msg = format!("{:#}", e);
+                cx.throw_error(error_msg)
+            }
+        });
+    });
+
+    Ok(promise)
+}
+
+fn cancel_body_stream(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+    let handle_id = cx.argument::<JsNumber>(0)?.value(&mut cx) as u64;
+    drop_body_stream(handle_id);
     Ok(cx.undefined())
 }
 
@@ -688,6 +738,8 @@ fn websocket_close(mut cx: FunctionContext) -> JsResult<JsPromise> {
 fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("request", request)?;
     cx.export_function("cancelRequest", cancel_request)?;
+    cx.export_function("readBodyChunk", read_body_chunk)?;
+    cx.export_function("cancelBody", cancel_body_stream)?;
     cx.export_function("getProfiles", get_profiles)?;
     cx.export_function("createSession", create_session)?;
     cx.export_function("clearSession", clear_session)?;
