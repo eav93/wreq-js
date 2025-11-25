@@ -317,7 +317,7 @@ function cloneNativeResponse(payload: NativeResponse): NativeResponse {
   return {
     status: payload.status,
     headers: { ...payload.headers },
-    body: Buffer.from(payload.body),
+    body: payload.body,
     cookies: { ...payload.cookies },
     url: payload.url,
   };
@@ -341,14 +341,14 @@ export class Response {
   constructor(payload: NativeResponse, requestUrl: string) {
     this.payload = cloneNativeResponse(payload);
     this.requestUrl = requestUrl;
-    this.status = payload.status;
-    this.statusText = STATUS_CODES[payload.status] ?? "";
+    this.status = this.payload.status;
+    this.statusText = STATUS_CODES[this.payload.status] ?? "";
     this.ok = this.status >= 200 && this.status < 300;
-    this.headers = new Headers(payload.headers);
-    this.url = payload.url;
+    this.headers = new Headers(this.payload.headers);
+    this.url = this.payload.url;
     this.redirected = this.url !== requestUrl;
-    this.cookies = { ...payload.cookies };
-    this.body = Buffer.from(payload.body);
+    this.cookies = { ...this.payload.cookies };
+    this.body = this.payload.body;
   }
 
   async json<T = unknown>(): Promise<T> {
@@ -358,8 +358,15 @@ export class Response {
 
   async arrayBuffer(): Promise<ArrayBuffer> {
     const bytes = this.consumeBody();
-    const copy = Buffer.from(bytes);
-    return copy.buffer.slice(copy.byteOffset, copy.byteOffset + copy.byteLength);
+    const { buffer, byteOffset, byteLength } = bytes;
+
+    if (buffer instanceof ArrayBuffer) {
+      return buffer.slice(byteOffset, byteOffset + byteLength);
+    }
+
+    const view = new Uint8Array(byteLength);
+    view.set(bytes);
+    return view.buffer;
   }
 
   async text(): Promise<string> {
