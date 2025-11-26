@@ -54,32 +54,67 @@ let nativeBinding: {
 let cachedProfiles: BrowserProfile[] | undefined;
 let cachedOperatingSystems: EmulationOS[] | undefined;
 
+function detectLibc(): "gnu" | "musl" | undefined {
+  if (process.platform !== "linux") {
+    return undefined;
+  }
+
+  const envLibc = process.env.LIBC ?? process.env.npm_config_libc;
+  if (envLibc) {
+    return envLibc.toLowerCase().includes("musl") ? "musl" : "gnu";
+  }
+
+  try {
+    const report = process.report?.getReport?.() as { header?: { glibcVersionRuntime?: string } } | undefined;
+    const glibcVersion = report?.header?.glibcVersionRuntime;
+
+    if (glibcVersion) {
+      return "gnu";
+    }
+
+    return "musl";
+  } catch {
+    return "gnu";
+  }
+}
+
 function loadNativeBinding() {
   const platform = process.platform;
   const arch = process.arch;
+  const libc = detectLibc();
 
   // Map Node.js platform/arch to Rust target triple suffixes
   // napi-rs creates files like: wreq-js.linux-x64-gnu.node
-  const platformArchMap: Record<string, Record<string, string>> = {
+  const platformArchMap: Record<string, Record<string, string | Record<"gnu" | "musl", string>>> = {
     darwin: {
       x64: "darwin-x64",
       arm64: "darwin-arm64",
     },
     linux: {
-      x64: "linux-x64-gnu",
-      arm64: "linux-arm64-gnu",
+      x64: {
+        gnu: "linux-x64-gnu",
+        musl: "linux-x64-musl",
+      },
+      arm64: {
+        gnu: "linux-arm64-gnu",
+        musl: "linux-arm64-musl",
+      },
     },
     win32: {
       x64: "win32-x64-msvc",
     },
   };
 
-  const platformArch = platformArchMap[platform]?.[arch];
+  const platformArchMapEntry = platformArchMap[platform]?.[arch];
+  const platformArch = typeof platformArchMapEntry === "string"
+    ? platformArchMapEntry
+    : platformArchMapEntry?.[(libc ?? "gnu") as "gnu" | "musl"];
 
   if (!platformArch) {
     throw new Error(
-      `Unsupported platform: ${platform}-${arch}. ` +
-        `Supported platforms: darwin-x64, darwin-arm64, linux-x64, linux-arm64, win32-x64`,
+      `Unsupported platform: ${platform}-${arch}${libc ? `-${libc}` : ""}. ` +
+        `Supported platforms: darwin-x64, darwin-arm64, linux-x64-gnu, linux-x64-musl, ` +
+        `linux-arm64-gnu, linux-arm64-musl, win32-x64-msvc`,
     );
   }
 
