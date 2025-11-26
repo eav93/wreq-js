@@ -106,9 +106,10 @@ function loadNativeBinding() {
   };
 
   const platformArchMapEntry = platformArchMap[platform]?.[arch];
-  const platformArch = typeof platformArchMapEntry === "string"
-    ? platformArchMapEntry
-    : platformArchMapEntry?.[(libc ?? "gnu") as "gnu" | "musl"];
+  const platformArch =
+    typeof platformArchMapEntry === "string"
+      ? platformArchMapEntry
+      : platformArchMapEntry?.[(libc ?? "gnu") as "gnu" | "musl"];
 
   if (!platformArch) {
     throw new Error(
@@ -198,6 +199,7 @@ function normalizeSessionOptions(options?: CreateSessionOptions): { sessionId: s
   }
 
   if (options?.timeout !== undefined) {
+    validateTimeout(options.timeout);
     defaults.timeout = options.timeout;
   }
 
@@ -919,6 +921,20 @@ function validateOperatingSystem(os?: EmulationOS): void {
   }
 }
 
+function validateTimeout(timeout?: number): void {
+  if (timeout === undefined) {
+    return;
+  }
+
+  if (typeof timeout !== "number" || !Number.isFinite(timeout)) {
+    throw new RequestError("Timeout must be a finite number");
+  }
+
+  if (timeout <= 0) {
+    throw new RequestError("Timeout must be greater than 0");
+  }
+}
+
 async function dispatchRequest(
   options: RequestOptions,
   requestUrl: string,
@@ -1002,6 +1018,7 @@ export async function fetch(input: string | URL, init?: WreqRequestInit): Promis
   validateRedirectMode(config.redirect);
   validateBrowserProfile(browser);
   validateOperatingSystem(os);
+  validateTimeout(timeout);
 
   if (sessionDefaults) {
     if (browser !== sessionDefaults.browser) {
