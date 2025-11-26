@@ -2,14 +2,32 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-fn main() {
-    let emulation_file = locate_wreq_util_emulation_file();
-    let emulation_source =
-        fs::read_to_string(&emulation_file).expect("Failed to read wreq-util emulation/mod.rs");
+use strum::VariantArray;
+use wreq_util::{Emulation, EmulationOS};
 
-    // Dynamically extract all browser profiles from wreq-util by reading the source
-    let profiles = extract_profiles_from_source(&emulation_source);
-    let operating_systems = extract_operating_systems_from_source(&emulation_source);
+fn main() {
+    // Get all variants directly from the enum using VARIANTS API
+    let profiles: Vec<String> = Emulation::VARIANTS
+        .iter()
+        .map(|variant| {
+            serde_json::to_value(variant)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+
+    let operating_systems: Vec<String> = EmulationOS::VARIANTS
+        .iter()
+        .map(|variant| {
+            serde_json::to_value(variant)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
 
     println!("cargo:warning=Found {} browser profiles", profiles.len());
     println!(
@@ -95,100 +113,4 @@ fn generate_rust_profiles(profiles: &[String], operating_systems: &[String]) -> 
     rust_content.push_str("];\n");
 
     rust_content
-}
-
-fn locate_wreq_util_emulation_file() -> std::path::PathBuf {
-    let metadata = std::process::Command::new("cargo")
-        .args(["metadata", "--format-version", "1"])
-        .output()
-        .expect("Failed to run cargo metadata");
-
-    let metadata_str = String::from_utf8(metadata.stdout).expect("Failed to parse cargo metadata");
-
-    // Parse JSON to find wreq-util package
-    let metadata_json: serde_json::Value =
-        serde_json::from_str(&metadata_str).expect("Failed to parse metadata JSON");
-
-    let packages = metadata_json["packages"]
-        .as_array()
-        .expect("No packages in metadata");
-
-    let wreq_util_pkg = packages
-        .iter()
-        .find(|p| p["name"].as_str() == Some("wreq-util"))
-        .expect("wreq-util package not found");
-
-    let manifest_path = wreq_util_pkg["manifest_path"]
-        .as_str()
-        .expect("No manifest_path for wreq-util");
-
-    Path::new(manifest_path)
-        .parent()
-        .expect("Failed to get wreq-util directory")
-        .join("src")
-        .join("emulation")
-        .join("mod.rs")
-}
-
-fn extract_profiles_from_source(content: &str) -> Vec<String> {
-    // Extract serde rename values from the file
-    // Look for patterns like: => ("profile_name", ...)
-    let mut profiles = Vec::new();
-
-    for line in content.lines() {
-        // Match lines like: Chrome100 => ("chrome_100", v100::emulation),
-        if let Some(start) = line.find("=> (\"")
-            && let Some(end) = line[start + 5..].find('"')
-        {
-            let profile = &line[start + 5..start + 5 + end];
-            profiles.push(profile.to_string());
-        }
-    }
-
-    if profiles.is_empty() {
-        panic!("No profiles found in wreq-util source!");
-    }
-
-    profiles
-}
-
-fn extract_operating_systems_from_source(content: &str) -> Vec<String> {
-    let mut operating_systems = Vec::new();
-    let mut in_os_block = false;
-    let mut saw_plain_marker = false;
-
-    for line in content.lines() {
-        if !in_os_block {
-            if line.contains("plain,") {
-                saw_plain_marker = true;
-                continue;
-            }
-
-            if saw_plain_marker && line.contains("EmulationOS") {
-                in_os_block = true;
-                continue;
-            }
-
-            continue;
-        }
-
-        if in_os_block {
-            if line.contains(");") {
-                break;
-            }
-
-            if let Some(start) = line.find("=> \"")
-                && let Some(end) = line[start + 4..].find('"')
-            {
-                let os = &line[start + 4..start + 4 + end];
-                operating_systems.push(os.to_string());
-            }
-        }
-    }
-
-    if operating_systems.is_empty() {
-        panic!("No operating systems found in wreq-util source!");
-    }
-
-    operating_systems
 }
