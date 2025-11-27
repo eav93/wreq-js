@@ -164,6 +164,21 @@ export interface RequestInit {
    * @default false
    */
   disableDefaultHeaders?: boolean;
+
+  /**
+   * Disable HTTPS certificate verification. When enabled, self-signed and invalid
+   * certificates will be accepted.
+   *
+   * # Warning
+   *
+   * You should think very carefully before using this method. If invalid
+   * certificates are trusted, *any* certificate for *any* site will be
+   * trusted for use. This includes expired certificates. This introduces
+   * significant vulnerabilities, and should only be used as a last resort.
+   *
+   * @default false
+   */
+  insecure?: boolean;
 }
 
 /**
@@ -192,6 +207,21 @@ export interface CreateSessionOptions {
    * overriding `timeout`.
    */
   timeout?: number;
+
+  /**
+   * Disable HTTPS certificate verification. When enabled, self-signed and invalid
+   * certificates will be accepted for all requests made through this session.
+   *
+   * # Warning
+   *
+   * You should think very carefully before using this method. If invalid
+   * certificates are trusted, *any* certificate for *any* site will be
+   * trusted for use. This includes expired certificates. This introduces
+   * significant vulnerabilities, and should only be used as a last resort.
+   *
+   * @default false
+   */
+  insecure?: boolean;
 }
 
 /**
@@ -290,6 +320,21 @@ export interface RequestOptions {
    * @default false
    */
   disableDefaultHeaders?: boolean;
+
+  /**
+   * Disable HTTPS certificate verification. When enabled, self-signed and invalid
+   * certificates will be accepted.
+   *
+   * # Warning
+   *
+   * You should think very carefully before using this method. If invalid
+   * certificates are trusted, *any* certificate for *any* site will be
+   * trusted for use. This includes expired certificates. This introduces
+   * significant vulnerabilities, and should only be used as a last resort.
+   *
+   * @default false
+   */
+  insecure?: boolean;
 }
 
 /**

@@ -121,6 +121,32 @@ const res = await fetch('https://api.example.com/submit', {
 });
 ```
 
+### Disabling Certificate Verification
+
+For development or testing against servers with self-signed or expired certificates, you can disable certificate verification:
+
+```typescript
+const response = await fetch('https://self-signed.example.com', {
+  browser: 'chrome_142',
+  insecure: true, // Accept invalid/self-signed certificates
+});
+```
+
+**⚠️ Security Warning:** Only use `insecure: true` in development or controlled testing environments. When enabled, **any** certificate for **any** site will be trusted, including expired and self-signed certificates. This introduces significant security vulnerabilities and should never be used in production.
+
+The `insecure` option works with both direct `fetch()` calls and sessions:
+
+```typescript
+// Per-request
+await fetch('https://localhost:8443', { insecure: true });
+
+// For all requests in a session
+const session = await createSession({
+  browser: 'chrome_142',
+  insecure: true, // All requests in this session accept invalid certificates
+});
+```
+
 ### Streaming Responses
 
 The `Response` object supports streaming via the standard `body` property, which returns a `ReadableStream<Uint8Array>`. This allows you to process large responses incrementally without loading the entire body into memory.
@@ -217,6 +243,16 @@ interface RequestInit {
   session?: Session;
   sessionId?: string;
   disableDefaultHeaders?: boolean; // Prevent emulation headers from being appended
+  insecure?: boolean; // Disable certificate verification (use with caution)
+}
+
+interface CreateSessionOptions {
+  browser?: BrowserProfile;
+  os?: EmulationOS;
+  proxy?: string;
+  sessionId?: string;
+  timeout?: number;
+  insecure?: boolean; // Disable certificate verification for all session requests
 }
 ```
 

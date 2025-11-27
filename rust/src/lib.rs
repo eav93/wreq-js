@@ -226,6 +226,12 @@ fn js_object_to_request_options(
         .map(|v| v.value(cx))
         .unwrap_or(false);
 
+    let insecure = obj
+        .get_opt(cx, "insecure")?
+        .and_then(|v: Handle<JsValue>| v.downcast::<JsBoolean, _>(cx).ok())
+        .map(|v| v.value(cx))
+        .unwrap_or(false);
+
     Ok(RequestOptions {
         url,
         emulation,
@@ -239,6 +245,7 @@ fn js_object_to_request_options(
         session_id,
         ephemeral,
         disable_default_headers,
+        insecure,
     })
 }
 
@@ -361,9 +368,9 @@ fn get_operating_systems(mut cx: FunctionContext) -> JsResult<JsArray> {
 fn create_session(mut cx: FunctionContext) -> JsResult<JsString> {
     let options_value = cx.argument_opt(0);
 
-    let (session_id_opt, browser_opt, os_opt, proxy_opt) = if let Some(value) = options_value {
+    let (session_id_opt, browser_opt, os_opt, proxy_opt, insecure_opt) = if let Some(value) = options_value {
         if value.is_a::<JsUndefined, _>(&mut cx) || value.is_a::<JsNull, _>(&mut cx) {
-            (None, None, None, None)
+            (None, None, None, None, None)
         } else {
             let obj = value.downcast_or_throw::<JsObject, _>(&mut cx)?;
             let session_id = obj
@@ -382,10 +389,14 @@ fn create_session(mut cx: FunctionContext) -> JsResult<JsString> {
                 .get_opt(&mut cx, "proxy")?
                 .and_then(|v: Handle<JsValue>| v.downcast::<JsString, _>(&mut cx).ok())
                 .map(|v| v.value(&mut cx));
-            (session_id, browser, os, proxy)
+            let insecure = obj
+                .get_opt(&mut cx, "insecure")?
+                .and_then(|v: Handle<JsValue>| v.downcast::<JsBoolean, _>(&mut cx).ok())
+                .map(|v| v.value(&mut cx));
+            (session_id, browser, os, proxy, insecure)
         }
     } else {
-        (None, None, None, None)
+        (None, None, None, None, None)
     };
 
     let session_id = session_id_opt.unwrap_or_else(generate_session_id);
@@ -393,8 +404,9 @@ fn create_session(mut cx: FunctionContext) -> JsResult<JsString> {
     let os_str = os_opt.unwrap_or_else(|| "macos".to_string());
     let emulation = parse_emulation(&browser_str);
     let emulation_os = parse_emulation_os(&os_str);
+    let insecure = insecure_opt.unwrap_or(false);
 
-    match create_managed_session(session_id.clone(), emulation, emulation_os, proxy_opt) {
+    match create_managed_session(session_id.clone(), emulation, emulation_os, proxy_opt, insecure) {
         Ok(id) => Ok(cx.string(id)),
         Err(e) => {
             let msg = format!("{:#}", e);

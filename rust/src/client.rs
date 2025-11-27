@@ -59,6 +59,7 @@ pub struct RequestOptions {
     pub session_id: String,
     pub ephemeral: bool,
     pub disable_default_headers: bool,
+    pub insecure: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +78,7 @@ struct SessionConfig {
     emulation_os: EmulationOS,
     label: String,
     proxy: Option<String>,
+    insecure: bool,
 }
 
 impl SessionConfig {
@@ -86,21 +88,25 @@ impl SessionConfig {
             emulation_os: options.emulation_os,
             label: emulation_label(&options.emulation, &options.emulation_os),
             proxy: options.proxy.clone(),
+            insecure: options.insecure,
         }
     }
 
-    fn new(emulation: Emulation, emulation_os: EmulationOS, proxy: Option<String>) -> Self {
+    fn new(emulation: Emulation, emulation_os: EmulationOS, proxy: Option<String>, insecure: bool) -> Self {
         let label = emulation_label(&emulation, &emulation_os);
         Self {
             emulation,
             emulation_os,
             label,
             proxy,
+            insecure,
         }
     }
 
     fn matches(&self, other: &SessionConfig) -> bool {
-        self.label == other.label && self.proxy == other.proxy
+        // Sessions must match on insecure setting to prevent reusing a client
+        // with different certificate verification settings (security critical)
+        self.label == other.label && self.proxy == other.proxy && self.insecure == other.insecure
     }
 }
 
@@ -343,6 +349,10 @@ fn build_client(config: &SessionConfig) -> Result<HttpClient> {
         client_builder = client_builder.proxy(proxy);
     }
 
+    if config.insecure {
+        client_builder = client_builder.cert_verification(false);
+    }
+
     client_builder
         .build()
         .context("Failed to build HTTP client")
@@ -378,8 +388,9 @@ pub fn create_managed_session(
     emulation: Emulation,
     emulation_os: EmulationOS,
     proxy: Option<String>,
+    insecure: bool,
 ) -> Result<String> {
-    let config = SessionConfig::new(emulation, emulation_os, proxy);
+    let config = SessionConfig::new(emulation, emulation_os, proxy, insecure);
     SESSION_MANAGER.create_session(session_id, config)
 }
 

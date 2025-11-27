@@ -171,6 +171,7 @@ type SessionDefaults = {
   os: EmulationOS;
   proxy?: string;
   timeout?: number;
+  insecure?: boolean;
 };
 
 type SessionResolution = {
@@ -198,6 +199,10 @@ function normalizeSessionOptions(options?: CreateSessionOptions): { sessionId: s
   if (options?.timeout !== undefined) {
     validateTimeout(options.timeout);
     defaults.timeout = options.timeout;
+  }
+
+  if (options?.insecure !== undefined) {
+    defaults.insecure = options.insecure;
   }
 
   return { sessionId, defaults };
@@ -1011,6 +1016,7 @@ export async function fetch(input: string | URL, init?: WreqRequestInit): Promis
   const os = config.os ?? sessionDefaults?.os ?? DEFAULT_OS;
   const proxy = config.proxy ?? sessionDefaults?.proxy;
   const timeout = config.timeout ?? sessionDefaults?.timeout;
+  const insecure = config.insecure ?? sessionDefaults?.insecure;
 
   validateRedirectMode(config.redirect);
   validateBrowserProfile(browser);
@@ -1051,6 +1057,7 @@ export async function fetch(input: string | URL, init?: WreqRequestInit): Promis
     ...(timeout !== undefined && { timeout }),
     ...(config.redirect !== undefined && { redirect: config.redirect }),
     ...(config.disableDefaultHeaders !== undefined && { disableDefaultHeaders: config.disableDefaultHeaders }),
+    ...(insecure !== undefined && { insecure }),
     sessionId: sessionContext.sessionId,
     ephemeral: sessionContext.dropAfterRequest,
   };
@@ -1082,6 +1089,7 @@ export async function createSession(options?: CreateSessionOptions): Promise<Ses
       browser: defaults.browser,
       os: defaults.os,
       ...(defaults.proxy !== undefined && { proxy: defaults.proxy }),
+      ...(defaults.insecure !== undefined && { insecure: defaults.insecure }),
     });
   } catch (error) {
     throw new RequestError(String(error));
