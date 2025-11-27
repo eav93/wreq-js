@@ -3,7 +3,11 @@ import { before, describe, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { websocket } from "../wreq-js";
 
-const WS_TEST_URL = process.env.WS_TEST_URL ?? "wss://echo.websocket.org";
+const WS_TEST_URL = process.env.WS_TEST_URL;
+
+if (!WS_TEST_URL) {
+  throw new Error("WS_TEST_URL environment variable must be set by the test runner");
+}
 
 describe("WebSocket", () => {
   before(() => {

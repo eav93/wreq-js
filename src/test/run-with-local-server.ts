@@ -2,7 +2,6 @@ import { spawn } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import process from "node:process";
-import type { LocalTestServer } from "./helpers/local-test-server";
 import { startLocalTestServer } from "./helpers/local-test-server";
 
 const testDir = __dirname;
@@ -36,16 +35,9 @@ async function main() {
 
   const env = { ...process.env };
 
-  let localServer: LocalTestServer | undefined;
-  if (!env.HTTP_TEST_BASE_URL || !env.WS_TEST_URL) {
-    localServer = await startLocalTestServer();
-    if (!env.HTTP_TEST_BASE_URL) {
-      env.HTTP_TEST_BASE_URL = localServer.httpBaseUrl;
-    }
-    if (!env.WS_TEST_URL) {
-      env.WS_TEST_URL = localServer.wsUrl;
-    }
-  }
+  const localServer = await startLocalTestServer();
+  env.HTTP_TEST_BASE_URL = localServer.httpBaseUrl;
+  env.WS_TEST_URL = localServer.wsUrl;
 
   const nodeArgs = ["--test", ...defaultTestFiles, ...normalizedExtraArgs];
   const testProcess = spawn(process.execPath, nodeArgs, {
@@ -54,13 +46,8 @@ async function main() {
   });
 
   const cleanup = async () => {
-    if (!localServer) {
-      return;
-    }
-    const server = localServer;
-    localServer = undefined;
     try {
-      await server.close();
+      await localServer.close();
     } catch (error) {
       console.error("Failed to stop local test server:", error);
     }
