@@ -95,10 +95,7 @@ function loadNativeBinding() {
         gnu: "linux-x64-gnu",
         musl: "linux-x64-musl",
       },
-      arm64: {
-        gnu: "linux-arm64-gnu",
-        musl: "linux-arm64-musl",
-      },
+      arm64: "linux-arm64-gnu",
     },
     win32: {
       x64: "win32-x64-msvc",
@@ -115,7 +112,7 @@ function loadNativeBinding() {
     throw new Error(
       `Unsupported platform: ${platform}-${arch}${libc ? `-${libc}` : ""}. ` +
         `Supported platforms: darwin-x64, darwin-arm64, linux-x64-gnu, linux-x64-musl, ` +
-        `linux-arm64-gnu, linux-arm64-musl, win32-x64-msvc`,
+        `linux-arm64-gnu, win32-x64-msvc`,
     );
   }
 
