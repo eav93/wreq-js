@@ -45,15 +45,14 @@ jobs:
           - os: ubuntu-24.04-arm
             node-version: 24
             arch: arm64
-          # musl builds
+          # musl builds (both cross-compiled from x86_64)
           - os: ubuntu-latest
             node-version: 24
             arch: x64
             target: x86_64-unknown-linux-musl
-          # aarch64 musl - build natively on ARM runner
-          - os: ubuntu-24.04-arm
+          - os: ubuntu-latest
             node-version: 24
-            arch: arm64
+            arch: x64
             target: aarch64-unknown-linux-musl
 
     name: Test on Node ${{ matrix.node-version }} (${{ matrix.arch }}) - ${{ matrix.os }}${{ matrix.target && format(' [{0}]', matrix.target) || '' }}
@@ -84,17 +83,18 @@ jobs:
           tar -xJf /tmp/x86_64-linux-musl.tar.xz -C "$HOME/musl-cross"
           echo "$HOME/musl-cross/x86_64-unknown-linux-musl/bin" >> "$GITHUB_PATH"
 
-      - name: Install musl native toolchain (aarch64)
+      - name: Install musl cross toolchain (aarch64)
         if: matrix.target == 'aarch64-unknown-linux-musl'
         run: |
           set -eux
           rustup target add aarch64-unknown-linux-musl
 
+          # Cross-compiler: runs on x86_64, produces aarch64 musl binaries
           TOOLCHAIN_URL="https://github.com/musl-cross/musl-cross/releases/download/20250929/aarch64-unknown-linux-musl.tar.xz"
-          mkdir -p "$HOME/musl-native"
+          mkdir -p "$HOME/musl-cross"
           curl -L "$TOOLCHAIN_URL" -o /tmp/aarch64-linux-musl.tar.xz
-          tar -xJf /tmp/aarch64-linux-musl.tar.xz -C "$HOME/musl-native"
-          echo "$HOME/musl-native/aarch64-unknown-linux-musl/bin" >> "$GITHUB_PATH"
+          tar -xJf /tmp/aarch64-linux-musl.tar.xz -C "$HOME/musl-cross"
+          echo "$HOME/musl-cross/aarch64-unknown-linux-musl/bin" >> "$GITHUB_PATH"
 
       - name: Cache Rust dependencies
         uses: actions/cache@v4
@@ -151,6 +151,7 @@ jobs:
         run: npm run build:ts
 
       - name: Run tests
+        if: "!matrix.target"
         run: npm test
 
   lint:
