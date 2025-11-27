@@ -14,10 +14,10 @@ describe("Insecure certificate verification", () => {
         timeout: 10_000,
       }),
       (error: unknown) => {
-        return error instanceof Error &&
-          (error.message.includes("certificate") ||
-           error.message.includes("SSL") ||
-           error.message.includes("TLS"));
+        return (
+          error instanceof Error &&
+          (error.message.includes("certificate") || error.message.includes("SSL") || error.message.includes("TLS"))
+        );
       },
       "Should reject self-signed certificates by default",
     );
@@ -30,7 +30,10 @@ describe("Insecure certificate verification", () => {
       insecure: true,
     });
 
-    assert.ok(response.status >= 200 && response.status < 400, "Should accept self-signed certificate with insecure flag");
+    assert.ok(
+      response.status >= 200 && response.status < 400,
+      "Should accept self-signed certificate with insecure flag",
+    );
   });
 
   test("rejects expired certificates by default", async () => {
@@ -40,11 +43,13 @@ describe("Insecure certificate verification", () => {
         timeout: 10_000,
       }),
       (error: unknown) => {
-        return error instanceof Error &&
+        return (
+          error instanceof Error &&
           (error.message.includes("certificate") ||
-           error.message.includes("SSL") ||
-           error.message.includes("TLS") ||
-           error.message.includes("expired"));
+            error.message.includes("SSL") ||
+            error.message.includes("TLS") ||
+            error.message.includes("expired"))
+        );
       },
       "Should reject expired certificates by default",
     );
@@ -72,10 +77,10 @@ describe("Insecure certificate verification", () => {
           timeout: 10_000,
         }),
         (error: unknown) => {
-          return error instanceof Error &&
-            (error.message.includes("certificate") ||
-             error.message.includes("SSL") ||
-             error.message.includes("TLS"));
+          return (
+            error instanceof Error &&
+            (error.message.includes("certificate") || error.message.includes("SSL") || error.message.includes("TLS"))
+          );
         },
         "Session should reject self-signed certificates by default",
       );
@@ -96,7 +101,10 @@ describe("Insecure certificate verification", () => {
         timeout: 10_000,
       });
 
-      assert.ok(response.status >= 200 && response.status < 400, "Session should accept self-signed certificate with insecure flag");
+      assert.ok(
+        response.status >= 200 && response.status < 400,
+        "Session should accept self-signed certificate with insecure flag",
+      );
     } finally {
       await session.close();
     }
@@ -135,10 +143,10 @@ describe("Insecure certificate verification", () => {
         // insecure not specified, should default to false
       }),
       (error: unknown) => {
-        return error instanceof Error &&
-          (error.message.includes("certificate") ||
-           error.message.includes("SSL") ||
-           error.message.includes("TLS"));
+        return (
+          error instanceof Error &&
+          (error.message.includes("certificate") || error.message.includes("SSL") || error.message.includes("TLS"))
+        );
       },
       "Should validate certificates when insecure is not specified",
     );
@@ -152,10 +160,10 @@ describe("Insecure certificate verification", () => {
         insecure: false,
       }),
       (error: unknown) => {
-        return error instanceof Error &&
-          (error.message.includes("certificate") ||
-           error.message.includes("SSL") ||
-           error.message.includes("TLS"));
+        return (
+          error instanceof Error &&
+          (error.message.includes("certificate") || error.message.includes("SSL") || error.message.includes("TLS"))
+        );
       },
       "Should validate certificates when insecure is explicitly false",
     );
