@@ -47,7 +47,7 @@ uuid = { version = "1", features = ["v4"] }
 [build-dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-strum = "0.27"
+strum = "0.27.2"
 wreq-util = { version = "3.0.0-rc.7", features = ["emulation-serde", "emulation-rand"] }
 
 [profile.release]
