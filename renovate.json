@@ -1,49 +1,55 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended", ":disableDependencyDashboard", "helpers:pinGitHubActionDigests"],
+  "extends": ["config:recommended", ":disableDependencyDashboard"],
   "labels": ["dependencies"],
+  "rangeStrategy": "bump",
   "lockFileMaintenance": {
     "enabled": true,
-    "automerge": true
+    "automerge": true,
   },
   "packageRules": [
     {
-      "description": "Do not create pin-only PRs (keep library-style semver ranges)",
+      "description": "Do not create pin-only PRs. Libraries must use SemVer ranges (e.g. ^1.0.0)",
       "matchUpdateTypes": ["pin", "pinDigest"],
       "enabled": false
     },
     {
-      "description": "Never automerge major updates",
+      "description": "Group all non-major devDependency updates to reduce noise",
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "all non-major dev dependencies",
+      "automerge": true,
+      "minimumReleaseAge": "3 days"
+    },
+    {
+      "description": "Never automerge major updates (Runtime or Dev)",
       "matchUpdateTypes": ["major"],
       "automerge": false
     },
     {
-      "description": "Automerge safe devDependency updates after a short soak",
-      "matchDepTypes": ["devDependencies"],
-      "matchUpdateTypes": ["minor", "patch"],
-      "minimumReleaseAge": "3 days",
-      "automerge": true
-    },
-    {
-      "description": "Automerge runtime patch updates after a short soak",
+      "description": "Runtime Patch updates: Automerge after soak.",
       "matchDepTypes": ["dependencies"],
       "matchUpdateTypes": ["patch"],
       "minimumReleaseAge": "3 days",
       "automerge": true
     },
     {
-      "description": "Runtime minor updates - slower cadence, manual merge",
+      "description": "Runtime Minor updates: Manual merge only. Changes might alter library behavior.",
       "matchDepTypes": ["dependencies"],
       "matchUpdateTypes": ["minor"],
       "minimumReleaseAge": "7 days",
       "automerge": false
     },
     {
-      "description": "Always track wreq pre-releases on Cargo",
+      "description": "Special logic for wreq. Track pre-releases and automerge if tests pass.",
       "matchManagers": ["cargo"],
       "matchPackageNames": ["wreq", "wreq-util"],
       "ignoreUnstable": false,
-      "respectLatest": false
+      "respectLatest": false,
+      "automerge": true,
+      "minimumReleaseAge": "0 days",
+      "prPriority": 10,
+      "labels": ["dependencies", "core-rust-update"]
     }
   ]
 }
