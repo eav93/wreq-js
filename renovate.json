@@ -3,6 +3,7 @@
   "extends": ["config:recommended", ":disableDependencyDashboard"],
   "labels": ["dependencies"],
   "rangeStrategy": "bump",
+  "ignoreDeps": ["node"],
   "lockFileMaintenance": {
     "enabled": false
   },
