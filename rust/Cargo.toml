@@ -30,7 +30,7 @@ dashmap = "6.1.0"
 
 # Serialization
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0"
+serde_json = "1.0.145"
 
 # Error handling
 anyhow = "1.0.100"
@@ -46,7 +46,7 @@ uuid = { version = "1", features = ["v4"] }
 
 [build-dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0"
+serde_json = "1.0.145"
 strum = "0.27.2"
 wreq-util = { version = "3.0.0-rc.7", features = ["emulation-serde", "emulation-rand"] }
 
