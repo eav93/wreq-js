@@ -25,6 +25,10 @@ pub static HTTP_RUNTIME: Lazy<Runtime> = Lazy::new(|| {
 
 static SESSION_MANAGER: Lazy<SessionManager> = Lazy::new(SessionManager::new);
 
+// Responses at or below this size (bytes) are fully buffered in Rust and returned
+// inline to Node, avoiding an extra round-trip to stream the body.
+const INLINE_BODY_MAX: u64 = 64 * 1024;
+
 #[derive(Debug, Clone, Copy, Default)]
 pub enum RedirectMode {
     #[default]
@@ -67,6 +71,7 @@ pub struct Response {
     pub status: u16,
     pub headers: IndexMap<String, String>,
     pub body_handle: Option<u64>,
+    pub body_bytes: Option<Bytes>,
     pub cookies: IndexMap<String, String>,
     pub url: String,
     pub content_length: Option<u64>,
@@ -347,20 +352,29 @@ async fn make_request_inner(options: RequestOptions) -> Result<Response> {
         cookies.insert(cookie.name().to_string(), cookie.value().to_string());
     }
 
-    let content_length = response.content_length();
+    let mut content_length = response.content_length();
     let allows_body = response_allows_body(status, method_upper.as_str());
 
-    let body_handle = if allows_body {
-        let stream: ResponseBodyStream = Box::pin(response.bytes_stream());
-        Some(store_body_stream(stream))
+    let (body_handle, body_bytes) = if allows_body {
+        let inline_eligible = content_length.map(|len| len <= INLINE_BODY_MAX).unwrap_or(false);
+
+        if inline_eligible {
+            let bytes = response.bytes().await?;
+            content_length = Some(bytes.len() as u64);
+            (None, Some(bytes))
+        } else {
+            let stream: ResponseBodyStream = Box::pin(response.bytes_stream());
+            (Some(store_body_stream(stream)), None)
+        }
     } else {
-        None
+        (None, None)
     };
 
     Ok(Response {
         status,
         headers: response_headers,
         body_handle,
+        body_bytes,
         cookies,
         url: final_url,
         content_length,

@@ -281,6 +281,18 @@ fn response_to_js_object<'a, C: Context<'a>>(
     }
     obj.set(cx, "cookies", cookies_obj)?;
 
+    // Inline body bytes for small responses (avoids a second native round-trip)
+    match response.body_bytes {
+        Some(bytes) => {
+            let buffer = JsBuffer::from_slice(cx, &bytes)?;
+            obj.set(cx, "bodyBytes", buffer)?;
+        }
+        None => {
+            let null_value = cx.null();
+            obj.set(cx, "bodyBytes", null_value)?;
+        }
+    }
+
     // Body handle for streaming
     match response.body_handle {
         Some(handle) => {
