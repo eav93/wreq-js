@@ -35,3 +35,4 @@ coverage/
 # Agents
 .claude/
 AGENTS.md
+CPU.*.cpuprofile

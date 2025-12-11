@@ -477,7 +477,6 @@ export class Response {
   readonly status: number;
   readonly statusText: string;
   readonly ok: boolean;
-  readonly headers: Headers;
   readonly contentLength: number | null;
   readonly url: string;
   readonly redirected: boolean;
@@ -487,6 +486,8 @@ export class Response {
 
   private readonly payload: NativeResponse;
   private readonly requestUrl: string;
+  private readonly headersInit: Record<string, string>;
+  private headersInstance: Headers | null;
   private inlineBody: Buffer | null;
   private bodySource: ReadableStream<Uint8Array> | null;
   private bodyStream: ReadableStream<Uint8Array> | null | undefined;
@@ -494,15 +495,16 @@ export class Response {
   private nativeHandleAvailable: boolean;
 
   constructor(payload: NativeResponse, requestUrl: string, bodySource?: ReadableStream<Uint8Array> | null) {
-    this.payload = cloneNativeResponse(payload);
+    this.payload = payload;
     this.requestUrl = requestUrl;
     this.status = this.payload.status;
     this.statusText = STATUS_CODES[this.payload.status] ?? "";
     this.ok = this.status >= 200 && this.status < 300;
-    this.headers = new Headers(this.payload.headers);
+    this.headersInit = this.payload.headers;
+    this.headersInstance = null;
     this.url = this.payload.url;
     this.redirected = this.url !== requestUrl;
-    this.cookies = { ...this.payload.cookies };
+    this.cookies = this.payload.cookies;
     this.contentLength = this.payload.contentLength ?? null;
     this.inlineBody = this.payload.bodyBytes ?? null;
 
@@ -524,6 +526,13 @@ export class Response {
     }
 
     this.bodyStream = undefined;
+  }
+
+  get headers(): Headers {
+    if (!this.headersInstance) {
+      this.headersInstance = new Headers(this.headersInit);
+    }
+    return this.headersInstance;
   }
 
   get body(): ReadableStream<Uint8Array> | null {
