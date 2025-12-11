@@ -1,4 +1,4 @@
-import { randomInt, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { STATUS_CODES } from "node:http";
 import { ReadableStream } from "node:stream/web";
 import type {
@@ -40,6 +40,7 @@ let nativeBinding: {
   request: (options: RequestOptions, requestId: number) => Promise<NativeResponse>;
   cancelRequest: (requestId: number) => void;
   readBodyChunk: (handleId: number) => Promise<Buffer | null>;
+  readBodyAll: (handleId: number) => Promise<Buffer>;
   cancelBody: (handleId: number) => void;
   getProfiles: () => string[];
   websocketConnect: (options: NativeWebSocketOptions) => Promise<NativeWebSocketConnection>;
@@ -487,6 +488,8 @@ export class Response {
   private readonly requestUrl: string;
   private bodySource: ReadableStream<Uint8Array> | null;
   private bodyStream: ReadableStream<Uint8Array> | null | undefined;
+  // Track if we can use the fast path (native handle not yet wrapped in a stream)
+  private nativeHandleAvailable: boolean;
 
   constructor(payload: NativeResponse, requestUrl: string, bodySource?: ReadableStream<Uint8Array> | null) {
     this.payload = cloneNativeResponse(payload);
@@ -501,17 +504,32 @@ export class Response {
     this.contentLength = this.payload.contentLength ?? null;
 
     if (typeof bodySource !== "undefined") {
+      // External stream provided (e.g., from clone) - no fast path
       this.bodySource = bodySource;
+      this.nativeHandleAvailable = false;
     } else if (this.payload.bodyHandle !== null) {
-      this.bodySource = createNativeBodyStream(this.payload.bodyHandle);
+      // Defer stream creation - we might use fast path instead
+      this.bodySource = null;
+      this.nativeHandleAvailable = true;
     } else {
       this.bodySource = null;
+      this.nativeHandleAvailable = false;
     }
 
     this.bodyStream = undefined;
   }
 
   get body(): ReadableStream<Uint8Array> | null {
+    if (this.payload.bodyHandle === null && this.bodySource === null) {
+      return null;
+    }
+
+    // Lazily create the stream if needed (disables fast path)
+    if (this.bodySource === null && this.nativeHandleAvailable && this.payload.bodyHandle !== null) {
+      this.bodySource = createNativeBodyStream(this.payload.bodyHandle);
+      this.nativeHandleAvailable = false;
+    }
+
     if (this.bodySource === null) {
       return null;
     }
@@ -554,6 +572,12 @@ export class Response {
       throw new TypeError("Cannot clone a Response whose body is already used");
     }
 
+    // If we still have the native handle (fast path), we need to create the stream first
+    if (this.nativeHandleAvailable && this.payload.bodyHandle !== null) {
+      this.bodySource = createNativeBodyStream(this.payload.bodyHandle);
+      this.nativeHandleAvailable = false;
+    }
+
     if (this.bodySource === null) {
       return new Response(cloneNativeResponse(this.payload), this.requestUrl, null);
     }
@@ -577,6 +601,21 @@ export class Response {
     this.assertBodyAvailable();
     this.bodyUsed = true;
 
+    // Fast path: if native handle is still available, read entire body in one Rust call
+    if (this.nativeHandleAvailable && this.payload.bodyHandle !== null) {
+      this.nativeHandleAvailable = false;
+      try {
+        return await nativeBinding.readBodyAll(this.payload.bodyHandle);
+      } catch (error) {
+        // Handle already consumed or error
+        if (String(error).includes("not found")) {
+          return Buffer.alloc(0);
+        }
+        throw error;
+      }
+    }
+
+    // Slow path: stream was accessed, use streaming consumption
     const stream = this.body;
     if (!stream) {
       return Buffer.alloc(0);
@@ -797,10 +836,18 @@ function isAbortError(error: unknown): error is Error {
   return Boolean(error) && typeof (error as Error).name === "string" && (error as Error).name === "AbortError";
 }
 
+// Request IDs must stay below 2^48 to preserve integer precision across the bridge.
+const REQUEST_ID_MAX = 2 ** 48;
+// Seed with a monotonic-ish value derived from hrtime to avoid collisions after reloads.
+let requestIdCounter = Math.trunc(Number(process.hrtime.bigint() % BigInt(REQUEST_ID_MAX - 1))) + 1;
+
 function generateRequestId(): number {
-  // Stay within Node's randomInt upper bound (2^48) and JS double precision.
-  const maxExclusive = 2 ** 48;
-  return randomInt(1, maxExclusive);
+  requestIdCounter += 1;
+  if (requestIdCounter >= REQUEST_ID_MAX) {
+    requestIdCounter = 1;
+  }
+
+  return requestIdCounter;
 }
 
 function setupAbort(signal: AbortSignal | null | undefined, cancelNative: () => void): AbortHandler | null {

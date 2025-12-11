@@ -157,6 +157,39 @@ pub async fn read_body_chunk(handle: u64) -> Result<Option<Bytes>> {
     }
 }
 
+/// Read entire body into a single buffer. More efficient than streaming for small bodies.
+pub async fn read_body_all(handle: u64) -> Result<Bytes> {
+    let stream = BODY_STREAMS
+        .remove(&handle)
+        .map(|(_, v)| v)
+        .ok_or_else(|| anyhow!("Body handle {} not found", handle))?;
+
+    let mut guard = stream.lock().await;
+    let mut chunks: Vec<Bytes> = Vec::new();
+    let mut total_len = 0usize;
+
+    while let Some(result) = guard.next().await {
+        let bytes = result?;
+        total_len += bytes.len();
+        chunks.push(bytes);
+    }
+
+    // Fast path: single chunk or empty
+    if chunks.is_empty() {
+        return Ok(Bytes::new());
+    }
+    if chunks.len() == 1 {
+        return Ok(chunks.into_iter().next().unwrap());
+    }
+
+    // Multiple chunks: consolidate
+    let mut buf = Vec::with_capacity(total_len);
+    for chunk in chunks {
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(Bytes::from(buf))
+}
+
 pub fn drop_body_stream(handle: u64) {
     BODY_STREAMS.remove(&handle);
 }

@@ -7,6 +7,7 @@ use client::{
     HTTP_RUNTIME, RedirectMode, RequestOptions, Response, clear_managed_session,
     create_managed_session, drop_body_stream, drop_managed_session, generate_session_id,
     make_request, read_body_chunk as native_read_body_chunk,
+    read_body_all as native_read_body_all,
 };
 use dashmap::DashMap;
 use futures_util::StreamExt;
@@ -474,6 +475,31 @@ fn cancel_body_stream(mut cx: FunctionContext) -> JsResult<JsUndefined> {
     Ok(cx.undefined())
 }
 
+/// Read entire body into a single Buffer. More efficient than streaming for small responses.
+fn read_body_all(mut cx: FunctionContext) -> JsResult<JsPromise> {
+    let handle_id = cx.argument::<JsNumber>(0)?.value(&mut cx) as u64;
+
+    let (deferred, promise) = cx.promise();
+    let settle_channel = cx.channel();
+
+    HTTP_RUNTIME.spawn(async move {
+        let result = native_read_body_all(handle_id).await;
+
+        deferred.settle_with(&settle_channel, move |mut cx| match result {
+            Ok(bytes) => {
+                let buffer = JsBuffer::from_slice(&mut cx, &bytes)?;
+                Ok(buffer)
+            }
+            Err(e) => {
+                let error_msg = format!("{:#}", e);
+                cx.throw_error(error_msg)
+            }
+        });
+    });
+
+    Ok(promise)
+}
+
 // WebSocket connection function
 fn websocket_connect(mut cx: FunctionContext) -> JsResult<JsPromise> {
     // Get the options object
@@ -789,6 +815,7 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("request", request)?;
     cx.export_function("cancelRequest", cancel_request)?;
     cx.export_function("readBodyChunk", read_body_chunk)?;
+    cx.export_function("readBodyAll", read_body_all)?;
     cx.export_function("cancelBody", cancel_body_stream)?;
     cx.export_function("getProfiles", get_profiles)?;
     cx.export_function("getOperatingSystems", get_operating_systems)?;
