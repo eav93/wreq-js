@@ -92,6 +92,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Patch boring-sys2 on Windows
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cargo fetch
+
+          FILE=$(find ~/.cargo/registry/src -name "main.rs" | grep "boring-sys2" | grep "build")
+          echo "Patching $FILE"
+
+          sed -i 's/if config.target.ends_with("-msvc") {/if config.target.ends_with("-msvc") { println!("cargo:rustc-link-search=native={}\/build\/crypto\/Release", bssl_dir.display()); println!("cargo:rustc-link-search=native={}\/build\/ssl\/Release", bssl_dir.display());/' "$FILE"
+
       - name: Build Rust module (x86_64 musl target)
         if: matrix.target == 'x86_64-unknown-linux-musl'
         env:
