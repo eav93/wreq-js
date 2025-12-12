@@ -109,7 +109,7 @@ jobs:
           
           echo "Patching $FILE"
 
-          sed -i 's/let bssl_dir = built_boring_source_path(config);/let bssl_dir = built_boring_source_path(config); if config.target.ends_with("-msvc") { println!("cargo:rustc-link-search=native={}\/build\/crypto\/Release", bssl_dir.display()); println!("cargo:rustc-link-search=native={}\/build\/ssl\/Release", bssl_dir.display()); }/' "$FILE"
+          sed -i 's/let bssl_dir = built_boring_source_path(config);/let bssl_dir = built_boring_source_path(config); if config.target.ends_with("-msvc") { for d in ["Release", "RelWithDebInfo", "Debug", "MinSizeRel"] { println!("cargo:rustc-link-search=native={}\/build\/crypto\/{}", bssl_dir.display(), d); println!("cargo:rustc-link-search=native={}\/build\/ssl\/{}", bssl_dir.display(), d); } }/' "$FILE"
 
       - name: Build Rust module (x86_64 musl target)
         if: matrix.target == 'x86_64-unknown-linux-musl'
