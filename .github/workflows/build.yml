@@ -113,9 +113,15 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         env:
-          CMAKE_GENERATOR: Ninja
-          CMAKE_BUILD_TYPE: Release
-          CMAKE_ARGS: -GNinja -DCMAKE_BUILD_TYPE=Release
+          RUST_BACKTRACE: "1"
+          CARGO_TERM_VERBOSE: "true"
+          CMAKE_GENERATOR: "Visual Studio 17 2022"
+          CARGO_BUILD_TARGET: x86_64-pc-windows-msvc
+          CARGO_TARGET_DIR: rust/target
+          DEBUG: "false"
+          OPT_LEVEL: "3"
+          CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_OPT_LEVEL: 3
+          CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_DEBUG: "false"
         run: ${{ matrix.settings.build }}
 
       - name: Build native module (other non-musl targets)
