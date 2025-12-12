@@ -54,3 +54,4 @@ wreq-util = { version = "3.0.0-rc.7", features = ["emulation-serde", "emulation-
 opt-level = 3
 lto = true
 codegen-units = 1
+debug = false
