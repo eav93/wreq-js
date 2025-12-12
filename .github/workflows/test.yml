@@ -112,6 +112,8 @@ jobs:
           CMAKE_GENERATOR: "Visual Studio 17 2022"
           CARGO_BUILD_TARGET: x86_64-pc-windows-msvc
           CARGO_TARGET_DIR: rust/target
+          DEBUG: "false"
+          OPT_LEVEL: "3"
         run: npm run build:rust
 
       - name: Build Rust module (native)
