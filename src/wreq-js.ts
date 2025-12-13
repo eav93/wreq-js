@@ -381,6 +381,50 @@ export class Headers implements Iterable<[string, string]> {
   }
 }
 
+function headersToTuples(init: HeadersInit): HeaderTuple[] {
+  // Fast paths for common high-throughput cases.
+  if (Array.isArray(init)) {
+    return init as HeaderTuple[];
+  }
+
+  if (init instanceof Headers) {
+    return init.toTuples();
+  }
+
+  const out: HeaderTuple[] = [];
+
+  if (isPlainObject(init)) {
+    for (const name in init) {
+      if (!Object.hasOwn(init, name)) {
+        continue;
+      }
+
+      const value = init[name];
+      if (value === undefined || value === null) {
+        continue;
+      }
+
+      out.push([name, String(value)]);
+    }
+
+    return out;
+  }
+
+  if (isIterable<HeaderTuple>(init)) {
+    for (const tuple of init) {
+      if (!tuple) {
+        continue;
+      }
+      const [name, value] = tuple;
+      out.push([name, value]);
+    }
+
+    return out;
+  }
+
+  return out;
+}
+
 type ResponseType = "basic" | "cors" | "error" | "opaque" | "opaqueredirect";
 
 function cloneNativeResponse(payload: NativeResponse): NativeResponse {
@@ -1153,8 +1197,9 @@ export async function fetch(input: string | URL, init?: WreqRequestInit): Promis
 
   ensureBodyAllowed(method, body);
 
-  // Only normalize headers when provided; avoids per-request header allocations on hot paths
-  const headerTuples = config.headers === undefined ? undefined : new Headers(config.headers).toTuples();
+  // Only normalize headers when provided; avoids per-request header allocations on hot paths.
+  // If the caller already provides HeaderTuple[], pass it through.
+  const headerTuples = config.headers === undefined ? undefined : headersToTuples(config.headers);
 
   const requestOptions: RequestOptions = {
     url,
