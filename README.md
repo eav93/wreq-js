@@ -260,6 +260,7 @@ interface CreateSessionOptions {
 
 - **[Architecture Guide](docs/ARCHITECTURE.md)** - How fingerprinting and impersonation work  
 - **[Build Instructions](docs/BUILD.md)** - Build from source  
+- **[Benchmarking](docs/BENCHMARK.md)** - Local, statistically meaningful benchmarks  
 
 ## Contributing
 

@@ -22,6 +22,9 @@
     "test:coverage": "npm run build && c8 --reporter=html --reporter=text --reporter=lcov node dist/test/run-with-local-server.js",
     "test:coverage:ci": "npm run build && c8 --reporter=text-summary --reporter=lcov node dist/test/run-with-local-server.js",
     "test:coverage:report": "c8 report --reporter=text",
+    "bench": "npm run build && node --expose-gc dist/bench/run.js",
+    "bench:run": "node --expose-gc dist/bench/run.js",
+    "bench:quick": "npm run build && node --expose-gc dist/bench/run.js --duration-ms 1000 --samples 8 --warmup 2 --concurrency 32",
     "check": "biome check .",
     "check:fix": "biome check --write .",
     "ci:biome": "biome ci ."
