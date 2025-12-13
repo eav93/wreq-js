@@ -10,24 +10,32 @@ const projectRoot = resolve(testDir, "..", "..");
 const httpTestDir = resolve(testDir, "http");
 const httpTestFiles = existsSync(httpTestDir)
   ? readdirSync(httpTestDir)
-      .filter((filename) => filename.endsWith(".spec.js"))
+      .filter((filename) => filename.endsWith(".spec.ts") || filename.endsWith(".spec.js"))
       .map((filename) => resolve(httpTestDir, filename))
       .sort()
   : [];
 
 async function main() {
   const extraArgs = process.argv.slice(2);
-  const defaultTestFiles = [...httpTestFiles, resolve(testDir, "websocket.spec.js")];
+  const websocketTestFile = ["websocket.spec.ts", "websocket.spec.js"]
+    .map((filename) => resolve(testDir, filename))
+    .find((filename) => existsSync(filename));
+  const defaultTestFiles = websocketTestFile ? [...httpTestFiles, websocketTestFile] : httpTestFiles;
 
   const normalizeArg = (arg: string): string => {
     const abs = resolve(process.cwd(), arg);
     if (abs.endsWith(".ts")) {
       const srcPrefix = `${resolve(projectRoot, "src")}/`;
-      if (abs.startsWith(srcPrefix)) {
-        const rel = abs.slice(srcPrefix.length);
-        return resolve(projectRoot, "dist", rel.replace(/\.ts$/, ".js"));
-      }
-      return abs.replace(/\.ts$/, ".js");
+      const jsCandidate = abs.startsWith(srcPrefix)
+        ? resolve(projectRoot, "dist", abs.slice(srcPrefix.length).replace(/\.ts$/, ".js"))
+        : abs.replace(/\.ts$/, ".js");
+
+      return existsSync(jsCandidate) ? jsCandidate : abs;
+    }
+
+    if (abs.endsWith(".js") && !existsSync(abs)) {
+      const tsCandidate = abs.replace(/\.js$/, ".ts");
+      return existsSync(tsCandidate) ? tsCandidate : abs;
     }
     return abs;
   };
@@ -40,7 +48,7 @@ async function main() {
   env.HTTP_TEST_BASE_URL = localServer.httpBaseUrl;
   env.WS_TEST_URL = localServer.wsUrl;
 
-  const nodeArgs = ["--test", ...defaultTestFiles, ...normalizedExtraArgs];
+  const nodeArgs = ["--import", "tsx", "--test", ...defaultTestFiles, ...normalizedExtraArgs];
   const testProcess = spawn(process.execPath, nodeArgs, {
     stdio: "inherit",
     env,
