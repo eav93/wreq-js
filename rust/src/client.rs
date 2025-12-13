@@ -5,6 +5,7 @@ use futures_util::{Stream, StreamExt};
 use indexmap::IndexMap;
 use moka::sync::Cache;
 use once_cell::sync::Lazy;
+use std::borrow::Cow;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -285,15 +286,14 @@ async fn make_request_inner(options: RequestOptions) -> Result<Response> {
         ..
     } = options;
 
+    // Methods are already normalized to uppercase in JS; default to GET when empty.
     let method = if method.is_empty() {
-        "GET".to_string()
+        Cow::Borrowed("GET")
     } else {
-        method
+        Cow::Owned(method)
     };
 
-    let method_upper = method.to_uppercase();
-
-    let request_method = match method_upper.as_str() {
+    let request_method = match method.as_ref() {
         "GET" => Method::GET,
         "POST" => Method::POST,
         "PUT" => Method::PUT,
@@ -303,8 +303,8 @@ async fn make_request_inner(options: RequestOptions) -> Result<Response> {
         "OPTIONS" => Method::OPTIONS,
         "CONNECT" => Method::CONNECT,
         "TRACE" => Method::TRACE,
-        _ => Method::from_bytes(method_upper.as_bytes())
-            .with_context(|| format!("Unsupported HTTP method: {}", method_upper))?,
+        _ => Method::from_bytes(method.as_bytes())
+            .with_context(|| format!("Unsupported HTTP method: {}", method))?,
     };
 
     // Build request
@@ -335,7 +335,7 @@ async fn make_request_inner(options: RequestOptions) -> Result<Response> {
     let response = request
         .send()
         .await
-        .with_context(|| format!("{} {}", method_upper, url))?;
+        .with_context(|| format!("{} {}", method, url))?;
 
     // Extract response data
     let status = response.status().as_u16();
@@ -357,7 +357,7 @@ async fn make_request_inner(options: RequestOptions) -> Result<Response> {
         .collect();
 
     let mut content_length = response.content_length();
-    let allows_body = response_allows_body(status, method_upper.as_str());
+    let allows_body = response_allows_body(status, method.as_ref());
 
     let (body_handle, body_bytes) = if allows_body {
         let inline_eligible = content_length.map(|len| len <= INLINE_BODY_MAX).unwrap_or(false);
