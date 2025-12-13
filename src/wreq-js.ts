@@ -469,7 +469,7 @@ function createNativeBodyStream(handleId: number): ReadableStream<Uint8Array> {
           return;
         }
 
-        controller.enqueue(new Uint8Array(chunk));
+        controller.enqueue(chunk);
       } catch (error) {
         releaseNativeBody(handle);
         controller.error(error);
@@ -708,7 +708,11 @@ export class Response {
         }
 
         if (value && value.byteLength > 0) {
-          chunks.push(Buffer.from(value));
+          if (Buffer.isBuffer(value)) {
+            chunks.push(value);
+          } else {
+            chunks.push(Buffer.from(value.buffer, value.byteOffset, value.byteLength));
+          }
         }
       }
     } finally {
