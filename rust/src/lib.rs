@@ -11,7 +11,6 @@ use client::{
 };
 use dashmap::DashMap;
 use futures_util::StreamExt;
-use indexmap::IndexMap;
 use neon::prelude::*;
 use neon::types::{
     JsArray, JsBoolean, JsBuffer, JsNull, JsObject, JsString, JsUndefined, JsValue,
@@ -94,15 +93,15 @@ fn parse_header_tuple(
 fn parse_headers_from_array(
     cx: &mut FunctionContext,
     array: Handle<JsArray>,
-) -> NeonResult<IndexMap<String, String>> {
-    let mut headers = IndexMap::new();
+) -> NeonResult<Vec<(String, String)>> {
     let len = array.len(cx);
+    let mut headers = Vec::with_capacity(len as usize);
 
     for i in 0..len {
         let element: Handle<JsValue> = array.get(cx, i)?;
         let tuple = element.downcast::<JsArray, _>(cx).or_throw(cx)?;
         let (name, value) = parse_header_tuple(cx, tuple)?;
-        headers.insert(name, value);
+        headers.push((name, value));
     }
 
     Ok(headers)
@@ -111,17 +110,17 @@ fn parse_headers_from_array(
 fn parse_headers_from_object(
     cx: &mut FunctionContext,
     obj: Handle<JsObject>,
-) -> NeonResult<IndexMap<String, String>> {
-    let mut headers = IndexMap::new();
+) -> NeonResult<Vec<(String, String)>> {
     let keys = obj.get_own_property_names(cx)?;
     let keys_vec = keys.to_vec(cx)?;
+    let mut headers = Vec::with_capacity(keys_vec.len());
 
     for key_val in keys_vec {
         if let Ok(key_str) = key_val.downcast::<JsString, _>(cx) {
             let key = key_str.value(cx);
             let value = obj.get(cx, key.as_str())?;
             let value = coerce_header_value(cx, value)?;
-            headers.insert(key, value);
+            headers.push((key, value));
         }
     }
 
@@ -131,9 +130,9 @@ fn parse_headers_from_object(
 fn parse_headers_from_value(
     cx: &mut FunctionContext,
     value: Handle<JsValue>,
-) -> NeonResult<IndexMap<String, String>> {
+) -> NeonResult<Vec<(String, String)>> {
     if value.is_a::<JsUndefined, _>(cx) || value.is_a::<JsNull, _>(cx) {
-        return Ok(IndexMap::new());
+        return Ok(Vec::new());
     }
 
     if value.is_a::<JsArray, _>(cx) {
@@ -185,7 +184,7 @@ fn js_object_to_request_options(
     let headers = if let Ok(Some(headers_val)) = obj.get_opt(cx, "headers") {
         parse_headers_from_value(cx, headers_val)?
     } else {
-        IndexMap::new()
+        Vec::new()
     };
 
     // Get body (optional)
@@ -207,7 +206,7 @@ fn js_object_to_request_options(
     let proxy = obj
         .get_opt(cx, "proxy")?
         .and_then(|v: Handle<JsValue>| v.downcast::<JsString, _>(cx).ok())
-        .map(|v| v.value(cx));
+        .map(|v| Arc::<str>::from(v.value(cx)));
 
     // Get timeout (optional, defaults to 30000ms)
     let timeout = obj
@@ -456,7 +455,7 @@ fn create_session(mut cx: FunctionContext) -> JsResult<JsString> {
             let proxy = obj
                 .get_opt(&mut cx, "proxy")?
                 .and_then(|v: Handle<JsValue>| v.downcast::<JsString, _>(&mut cx).ok())
-                .map(|v| v.value(&mut cx));
+                .map(|v| Arc::<str>::from(v.value(&mut cx)));
             let insecure = obj
                 .get_opt(&mut cx, "insecure")?
                 .and_then(|v: Handle<JsValue>| v.downcast::<JsBoolean, _>(&mut cx).ok())
@@ -595,14 +594,14 @@ fn websocket_connect(mut cx: FunctionContext) -> JsResult<JsPromise> {
     let headers = if let Ok(Some(headers_value)) = options_obj.get_opt(&mut cx, "headers") {
         parse_headers_from_value(&mut cx, headers_value)?
     } else {
-        IndexMap::new()
+        Vec::new()
     };
 
     // Get proxy (optional)
     let proxy = options_obj
         .get_opt(&mut cx, "proxy")?
         .and_then(|v: Handle<JsValue>| v.downcast::<JsString, _>(&mut cx).ok())
-        .map(|v| v.value(&mut cx));
+        .map(|v| Arc::<str>::from(v.value(&mut cx)));
 
     // Get callbacks
     let on_message: Handle<JsFunction> = options_obj.get(&mut cx, "onMessage")?;

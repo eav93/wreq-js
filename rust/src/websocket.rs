@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
-use indexmap::IndexMap;
 use neon::prelude::*;
 use once_cell::sync::Lazy;
 use std::sync::Arc;
@@ -21,8 +20,8 @@ pub struct WebSocketOptions {
     pub url: String,
     pub emulation: Emulation,
     pub emulation_os: EmulationOS,
-    pub headers: IndexMap<String, String>,
-    pub proxy: Option<String>,
+    pub headers: Vec<(String, String)>,
+    pub proxy: Option<Arc<str>>,
 }
 
 /// WebSocket connection wrapper
@@ -100,7 +99,7 @@ pub async fn connect_websocket(
     let mut client_builder = wreq::Client::builder().emulation(emulation);
 
     // Apply proxy if present
-    if let Some(proxy_url) = &options.proxy {
+    if let Some(proxy_url) = options.proxy.as_deref() {
         let proxy = wreq::Proxy::all(proxy_url).context("Failed to create proxy")?;
         client_builder = client_builder.proxy(proxy);
     }

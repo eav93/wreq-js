@@ -2,7 +2,6 @@ use anyhow::{Context, Result, anyhow};
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures_util::{Stream, StreamExt};
-use indexmap::IndexMap;
 use moka::sync::Cache;
 use once_cell::sync::Lazy;
 use std::borrow::Cow;
@@ -54,10 +53,10 @@ pub struct RequestOptions {
     pub url: String,
     pub emulation: Emulation,
     pub emulation_os: EmulationOS,
-    pub headers: IndexMap<String, String>,
+    pub headers: Vec<(String, String)>,
     pub method: String,
     pub body: Option<Vec<u8>>,
-    pub proxy: Option<String>,
+    pub proxy: Option<Arc<str>>,
     pub timeout: u64,
     pub redirect: RedirectMode,
     pub session_id: String,
@@ -81,7 +80,7 @@ pub struct Response {
 struct SessionConfig {
     emulation: Emulation,
     emulation_os: EmulationOS,
-    proxy: Option<String>,
+    proxy: Option<Arc<str>>,
     insecure: bool,
 }
 
@@ -97,7 +96,7 @@ impl SessionConfig {
     }
 
     #[inline]
-    fn new(emulation: Emulation, emulation_os: EmulationOS, proxy: Option<String>, insecure: bool) -> Self {
+    fn new(emulation: Emulation, emulation_os: EmulationOS, proxy: Option<Arc<str>>, insecure: bool) -> Self {
         Self {
             emulation,
             emulation_os,
@@ -257,16 +256,14 @@ impl SessionManager {
 }
 
 pub async fn make_request(options: RequestOptions) -> Result<Response> {
-    let session_id = options.session_id.clone();
-    let ephemeral = options.ephemeral;
-
-    let result = make_request_inner(options).await;
-
-    if ephemeral {
+    if options.ephemeral {
+        let session_id = options.session_id.clone();
+        let result = make_request_inner(options).await;
         SESSION_MANAGER.drop_session(&session_id);
+        result
+    } else {
+        make_request_inner(options).await
     }
-
-    result
 }
 
 async fn make_request_inner(options: RequestOptions) -> Result<Response> {
@@ -424,7 +421,7 @@ pub fn create_managed_session(
     session_id: String,
     emulation: Emulation,
     emulation_os: EmulationOS,
-    proxy: Option<String>,
+    proxy: Option<Arc<str>>,
     insecure: bool,
 ) -> Result<String> {
     let config = SessionConfig::new(emulation, emulation_os, proxy, insecure);

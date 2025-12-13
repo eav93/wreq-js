@@ -1287,17 +1287,7 @@ export async function fetch(input: string | URL, init?: WreqRequestInit): Promis
     requestOptions.headers = headerTuples;
   }
 
-  try {
-    return await dispatchRequest(requestOptions, url, config.signal ?? null);
-  } finally {
-    if (sessionContext.dropAfterRequest) {
-      try {
-        nativeBinding.dropSession(sessionContext.sessionId);
-      } catch {
-        // ignore cleanup errors for ephemeral sessions
-      }
-    }
-  }
+  return dispatchRequest(requestOptions, url, config.signal ?? null);
 }
 
 export async function createSession(options?: CreateSessionOptions): Promise<Session> {
