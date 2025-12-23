@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use neon::prelude::*;
-use once_cell::sync::Lazy;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::Mutex;
 use wreq::ws::WebSocket;
@@ -11,7 +11,7 @@ use wreq::ws::message::Message;
 use wreq_util::{Emulation, EmulationOS, EmulationOption};
 
 // Global storage for WebSocket connections
-static WS_CONNECTIONS: Lazy<DashMap<u64, Arc<WsConnection>>> = Lazy::new(DashMap::new);
+static WS_CONNECTIONS: LazyLock<DashMap<u64, Arc<WsConnection>>> = LazyLock::new(DashMap::new);
 
 static NEXT_WS_ID: AtomicU64 = AtomicU64::new(1);
 

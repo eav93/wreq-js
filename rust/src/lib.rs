@@ -16,8 +16,8 @@ use neon::types::{
     JsArray, JsBoolean, JsBuffer, JsNull, JsObject, JsString, JsUndefined, JsValue,
     buffer::TypedArray,
 };
-use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 use std::sync::Arc;
 use tokio::sync::{Semaphore, mpsc};
 use tokio_util::sync::CancellationToken;
@@ -28,11 +28,11 @@ use wreq::ws::message::Message;
 use wreq_util::{Emulation, EmulationOS};
 
 const WS_EVENT_BUFFER: usize = 64;
-static REQUEST_CANCELLATIONS: Lazy<DashMap<u64, CancellationToken>> = Lazy::new(DashMap::new);
+static REQUEST_CANCELLATIONS: LazyLock<DashMap<u64, CancellationToken>> = LazyLock::new(DashMap::new);
 
 // Parse browser string to Emulation enum using serde
 fn parse_emulation(browser: &str) -> Emulation {
-    static EMULATION_CACHE: Lazy<HashMap<&'static str, Emulation>> = Lazy::new(|| {
+    static EMULATION_CACHE: LazyLock<HashMap<&'static str, Emulation>> = LazyLock::new(|| {
         generated_profiles::BROWSER_PROFILES
             .iter()
             .filter_map(|label| {
@@ -51,7 +51,7 @@ fn parse_emulation(browser: &str) -> Emulation {
 }
 
 fn parse_emulation_os(os: &str) -> EmulationOS {
-    static OS_CACHE: Lazy<HashMap<&'static str, EmulationOS>> = Lazy::new(|| {
+    static OS_CACHE: LazyLock<HashMap<&'static str, EmulationOS>> = LazyLock::new(|| {
         generated_profiles::OPERATING_SYSTEMS
             .iter()
             .filter_map(|label| {

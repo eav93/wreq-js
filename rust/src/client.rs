@@ -3,10 +3,10 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use futures_util::{Stream, StreamExt};
 use moka::sync::Cache;
-use once_cell::sync::Lazy;
 use std::borrow::Cow;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::runtime::Runtime;
@@ -15,14 +15,14 @@ use uuid::Uuid;
 use wreq::{Client as HttpClient, Method, Proxy, redirect};
 use wreq_util::{Emulation, EmulationOS, EmulationOption};
 
-pub static HTTP_RUNTIME: Lazy<Runtime> = Lazy::new(|| {
+pub static HTTP_RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("Failed to create shared HTTP runtime")
 });
 
-static SESSION_MANAGER: Lazy<SessionManager> = Lazy::new(SessionManager::new);
+static SESSION_MANAGER: LazyLock<SessionManager> = LazyLock::new(SessionManager::new);
 
 // Responses at or below this size (bytes) are fully buffered in Rust and returned
 // inline to Node, avoiding an extra round-trip to stream the body.
@@ -130,7 +130,7 @@ struct SessionManager {
 
 pub type ResponseBodyStream = Pin<Box<dyn Stream<Item = wreq::Result<Bytes>> + Send>>;
 
-static BODY_STREAMS: Lazy<DashMap<u64, Arc<Mutex<ResponseBodyStream>>>> = Lazy::new(DashMap::new);
+static BODY_STREAMS: LazyLock<DashMap<u64, Arc<Mutex<ResponseBodyStream>>>> = LazyLock::new(DashMap::new);
 static NEXT_BODY_HANDLE: AtomicU64 = AtomicU64::new(1);
 
 fn next_body_handle() -> u64 {
