@@ -73,11 +73,11 @@ jobs:
           set -eux
           rustup target add x86_64-unknown-linux-musl
 
-          TOOLCHAIN_URL="https://github.com/musl-cross/musl-cross/releases/download/20250929/x86_64-unknown-linux-musl.tar.xz"
+          TOOLCHAIN_URL="https://github.com/troglobit/misc/releases/download/11-20211120/x86_64-linux-musl-cross.tgz"
           mkdir -p "$HOME/musl-cross"
-          curl -L "$TOOLCHAIN_URL" -o /tmp/x86_64-linux-musl.tar.xz
-          tar -xJf /tmp/x86_64-linux-musl.tar.xz -C "$HOME/musl-cross"
-          echo "$HOME/musl-cross/x86_64-unknown-linux-musl/bin" >> "$GITHUB_PATH"
+          curl -L "$TOOLCHAIN_URL" -o /tmp/x86_64-linux-musl-cross.tgz
+          tar -xzf /tmp/x86_64-linux-musl-cross.tgz -C "$HOME/musl-cross"
+          echo "$HOME/musl-cross/x86_64-linux-musl-cross/bin" >> "$GITHUB_PATH"
 
       - name: Cache Rust dependencies
         uses: actions/cache@v5
@@ -91,6 +91,28 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Build Rust module (x86_64 musl target)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        env:
+          CARGO_BUILD_TARGET: x86_64-unknown-linux-musl
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: x86_64-linux-musl-gcc
+          CC_x86_64_unknown_linux_musl: x86_64-linux-musl-gcc
+          CXX_x86_64_unknown_linux_musl: x86_64-linux-musl-g++
+          AR_x86_64_unknown_linux_musl: x86_64-linux-musl-ar
+          RANLIB_x86_64_unknown_linux_musl: x86_64-linux-musl-ranlib
+          RUSTFLAGS: -C target-feature=-crt-static
+        run: npm run build:rust
+
+      - name: Smoke test musl addon
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          docker run --rm \
+            -e WREQ_PLATFORM_ARCH=linux-x64-musl \
+            -v "$PWD:/app" \
+            -w /app \
+            node:20-alpine \
+            node scripts/smoke-native.cjs
 
       - name: Patch boring-sys2 on Windows
         if: runner.os == 'Windows'
