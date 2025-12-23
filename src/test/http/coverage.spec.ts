@@ -1,24 +1,23 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 import {
+  createSession,
+  get,
   Headers,
+  post,
   RequestError,
   Response,
-  createSession,
-  fetch as wreqFetch,
-  get,
-  post,
   request,
+  fetch as wreqFetch,
 } from "../../wreq-js.js";
 import { httpUrl } from "../helpers/http.js";
 
 describe("Headers helpers", () => {
   test("normalizes, iterates, and deletes entries", () => {
-    const init = [
-      ["X-Alpha", "one"],
-      undefined as unknown as [string, string],
-      ["X-Alpha", "two"],
-    ] as [string, string][];
+    const init = [["X-Alpha", "one"], undefined as unknown as [string, string], ["X-Alpha", "two"]] as [
+      string,
+      string,
+    ][];
 
     const headers = new Headers(init);
     headers.append("X-Bravo", "three");
@@ -38,11 +37,11 @@ describe("Headers helpers", () => {
     assert.strictEqual(obj["X-Alpha"], "one, two");
 
     let count = 0;
-    const context = { count: 0 };
-    headers.forEach(function (value, name) {
+    const context: { count: number } = { count: 0 };
+    headers.forEach(function (this: { count: number }, value, name) {
       count += 1;
       this.count += value.length + name.length;
-    }, context as { count: number });
+    }, context);
 
     assert.ok(count > 0);
     assert.ok(context.count > 0);
@@ -104,10 +103,14 @@ describe("Request helpers", () => {
       browser: "chrome_142",
       timeout: 10_000,
       disableDefaultHeaders: true,
-      headers: [["X-Array", "one"], ["X-Array", "two"]],
+      headers: [
+        ["X-Array", "one"],
+        ["X-Array", "two"],
+      ],
     });
     const arrayBody = await arrayResponse.json<{ headers: Record<string, string> }>();
-    assert.ok(arrayBody.headers["X-Array"].includes("one"));
+    const arrayHeader = arrayBody.headers["X-Array"];
+    assert.ok(arrayHeader?.includes("one"));
 
     const mapResponse = await wreqFetch(httpUrl("/headers"), {
       browser: "chrome_142",
@@ -137,12 +140,8 @@ describe("Request helpers", () => {
         headers: objectHeaders,
       });
       const objectBody = await objectResponse.json<{ headers: Record<string, string> }>();
-      const ownHeader = Object.entries(objectBody.headers).find(
-        ([name]) => name.toLowerCase() === "x-own",
-      );
-      const inheritedHeader = Object.entries(objectBody.headers).find(
-        ([name]) => name.toLowerCase() === "x-inherited",
-      );
+      const ownHeader = Object.entries(objectBody.headers).find(([name]) => name.toLowerCase() === "x-own");
+      const inheritedHeader = Object.entries(objectBody.headers).find(([name]) => name.toLowerCase() === "x-inherited");
       assert.strictEqual(ownHeader?.[1], "ok");
       assert.strictEqual(inheritedHeader, undefined);
     } finally {
@@ -258,7 +257,8 @@ describe("Session validation", () => {
     try {
       await assert.rejects(
         wreqFetch(httpUrl("/get"), { browser: "chrome_142", session, sessionId: "abc" }),
-        (error: unknown) => error instanceof RequestError && /Provide either `session` or `sessionId`/.test(error.message),
+        (error: unknown) =>
+          error instanceof RequestError && /Provide either `session` or `sessionId`/.test(error.message),
       );
     } finally {
       await session.close();
@@ -302,7 +302,8 @@ describe("Session validation", () => {
     try {
       await assert.rejects(
         session.fetch(httpUrl("/get"), { sessionId: "abc" } as never),
-        (error: unknown) => error instanceof RequestError && /Provide either `session` or `sessionId`/.test(error.message),
+        (error: unknown) =>
+          error instanceof RequestError && /Provide either `session` or `sessionId`/.test(error.message),
       );
 
       await assert.rejects(
@@ -312,7 +313,8 @@ describe("Session validation", () => {
 
       await assert.rejects(
         session.fetch(httpUrl("/get"), { os: "linux" as never }),
-        (error: unknown) => error instanceof RequestError && /Session operating system cannot be changed/.test(error.message),
+        (error: unknown) =>
+          error instanceof RequestError && /Session operating system cannot be changed/.test(error.message),
       );
 
       await assert.rejects(
