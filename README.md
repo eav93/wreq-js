@@ -1,5 +1,8 @@
 # wreq-js
 
+[![npm](https://img.shields.io/npm/v/wreq-js.svg)](https://www.npmjs.com/package/wreq-js)
+[![CI](https://github.com/sqdshguy/wreq-js/actions/workflows/test.yml/badge.svg)](https://github.com/sqdshguy/wreq-js/actions/workflows/test.yml)
+
 High-performance HTTP client for Node.JS with real-browser TLS and HTTP/2 fingerprints, powered by Rust.
 
 - ⚡️ A modern, actively maintained alternative to outdated browser-impersonating clients and legacy wrappers.  
@@ -36,9 +39,15 @@ Prebuilt binaries are provided for:
 > ⚠️ If a prebuilt binary for your platform or commit is unavailable, the package will build from source.  
 > Make sure a Rust toolchain and required build dependencies are installed.
 
-## Why It Exists
+## Why wreq-js
 
-HTTP clients like `axios`, `fetch`, `got`, `curl`  do not behave like browsers on the network layer.  
+- **Stealth** - fingerprints that track real browser TLS and HTTP/2 stacks  
+- **Speed** - native performance without launching a browser process  
+- **Profiles** - maintained fingerprints synced from upstream `wreq-util`  
+
+When not to use: if you need DOM/JavaScript execution, CAPTCHA solving, or full browser automation, use Playwright/Puppeteer instead.
+
+HTTP clients like `axios`, `fetch`, `got`, `curl` do not behave like browsers on the network layer.  
 They differ in:
 
 - **TLS handshake** - unique cipher suite order and extension sets  
@@ -80,6 +89,87 @@ console.log(await response.json());
 ```
 
 That’s it, you now have full browser impersonation, drop-in compatibility with the `fetch()` API.
+
+## LLM Quickstart
+
+Copy/paste recipes:
+
+### Login flow with a session
+
+```typescript
+import { createSession } from 'wreq-js';
+
+const session = await createSession({ browser: 'chrome_142' });
+await session.fetch('https://example.com/login', {
+  method: 'POST',
+  body: new URLSearchParams({ user: 'name', pass: 'secret' }),
+});
+
+const account = await session.fetch('https://example.com/account');
+console.log(await account.text());
+await session.close();
+```
+
+### Proxy rotation per request
+
+```typescript
+import { fetch } from 'wreq-js';
+
+const proxies = [
+  'http://user:pass@proxy-1.example:8080',
+  'http://user:pass@proxy-2.example:8080',
+];
+
+for (const proxy of proxies) {
+  const res = await fetch('https://example.com', { proxy, browser: 'chrome_142' });
+  console.log(proxy, res.status);
+}
+```
+
+### Abort + timeout
+
+```typescript
+import { fetch } from 'wreq-js';
+
+const controller = new AbortController();
+const timer = setTimeout(() => controller.abort(), 2000);
+
+try {
+  const res = await fetch('https://example.com/slow', {
+    browser: 'chrome_142',
+    timeout: 5000,
+    signal: controller.signal,
+  });
+  console.log(await res.text());
+} finally {
+  clearTimeout(timer);
+}
+```
+
+### Stream a response
+
+```typescript
+import { fetch } from 'wreq-js';
+
+const res = await fetch('https://example.com/stream', { browser: 'chrome_142' });
+const reader = res.body?.getReader();
+if (!reader) {
+  throw new Error('No response body');
+}
+
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) {
+    break;
+  }
+  console.log('chunk', value.byteLength);
+}
+```
+
+Non-goals / incompatibilities:
+- No DOM or JavaScript execution (not a browser runtime)
+- No CAPTCHA solving or page automation primitives
+- Not a full Fetch API polyfill (no Cache, Service Worker, etc.)
 
 ## Advanced Usage
 
@@ -186,6 +276,12 @@ if (stream) {
 Each `fetch()` call runs in **ephemeral mode** so that TLS caches, cookies, and session data never leak across requests.
 To persist state, use `createSession()` or `withSession()`:
 
+| Scenario | Recommended | Why |
+| --- | --- | --- |
+| One-off request, no cookie carryover | `ephemeral` (default) | Fresh TLS/cookie jar per call |
+| Multi-step login or reuse cookies | `session` | Shared cookie jar and TLS cache |
+| Parallel jobs that must stay isolated | `ephemeral` or per-job session | Avoid cross-talk between tasks |
+
 ```typescript
 import { createSession, withSession } from 'wreq-js';
 
@@ -199,6 +295,7 @@ await withSession(async (s) => {
   await s.fetch('https://example.com/a');
   await s.fetch('https://example.com/b');
 });
+```
 
 For finer control:
 
@@ -206,6 +303,44 @@ For finer control:
 await fetch('https://example.com', {
   sessionId: 'user-42',
   cookieMode: 'session',
+});
+```
+
+### Concurrency limiter (p-limit)
+
+```typescript
+import pLimit from 'p-limit';
+import { fetch } from 'wreq-js';
+
+const limit = pLimit(5);
+const urls = ['https://example.com/a', 'https://example.com/b'];
+
+const responses = await Promise.all(
+  urls.map((url) => limit(() => fetch(url, { browser: 'chrome_142' })))
+);
+
+console.log(responses.map((res) => res.status));
+```
+
+## Performance Tips
+
+- Reuse sessions for multi-request workflows to keep TLS and cookies warm
+- Prebuild `HeaderTuple[]` for hot paths to avoid repeated allocations
+- Default emulation headers are merged in; set `disableDefaultHeaders: true` when you need exact headers
+
+```typescript
+import type { HeaderTuple } from 'wreq-js';
+import { fetch } from 'wreq-js';
+
+const baseHeaders: HeaderTuple[] = [
+  ['accept', '*/*'],
+  ['user-agent', 'CustomBot/1.0'],
+];
+
+await fetch('https://example.com', {
+  browser: 'chrome_142',
+  headers: baseHeaders,
+  disableDefaultHeaders: true,
 });
 ```
 
