@@ -10,48 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test_pr:
-    if: github.event_name == 'pull_request'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            node-version: 20
-            arch: x64
-          - os: ubuntu-24.04
-            node-version: 24
-            arch: x64
-          - os: macos-14
-            node-version: 24
-            arch: arm64
-
-    name: "PR tests: Node ${{ matrix.node-version }} (${{ matrix.arch }}) - ${{ matrix.os }}"
-    runs-on: ${{ matrix.os }}
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-      #   run: npm run build:rust
-      # - name: Debug - List built files
-      #   shell: bash
-      #   run: |
-      #     echo "=== Files in rust/ ==="
-      #     ls -la rust/*.node || echo "No .node files in rust/"
-      #     echo ""
-      #     echo "=== Node platform info ==="
-      #     node -e "console.log('Platform:', process.platform, 'Arch:', process.arch)"
-
-      # - name: Build TypeScript
-      #   run: npm run build:ts
-
-      - name: Run tests
-        run: npm test
-
-  test_full:
+  test:
     if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
@@ -98,7 +57,7 @@ jobs:
             arch: x64
             target: x86_64-unknown-linux-musl
 
-    name: "Full tests: Node ${{ matrix.node-version }} (${{ matrix.arch }}) - ${{ matrix.os }}${{ matrix.target && format(' [{0}]', matrix.target) || '' }}"
+    name: "Tests: Node ${{ matrix.node-version }} (${{ matrix.arch }}) - ${{ matrix.os }}${{ matrix.target && format(' [{0}]', matrix.target) || '' }}"
     runs-on: ${{ matrix.os }}
 
     steps:
