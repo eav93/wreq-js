@@ -41,6 +41,7 @@
             "pages": [
               "api-reference/overview",
               "api-reference/fetch",
+              "api-reference/transport",
               "api-reference/sessions",
               "api-reference/websocket",
               "api-reference/utilities"
