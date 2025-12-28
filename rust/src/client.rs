@@ -23,6 +23,7 @@ pub static HTTP_RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
 });
 
 static SESSION_MANAGER: LazyLock<SessionManager> = LazyLock::new(SessionManager::new);
+static EPHEMERAL_MANAGER: LazyLock<EphemeralClientManager> = LazyLock::new(EphemeralClientManager::new);
 
 // Responses at or below this size (bytes) are fully buffered in Rust and returned
 // inline to Node, avoiding an extra round-trip to stream the body.
@@ -76,7 +77,7 @@ pub struct Response {
     pub content_length: Option<u64>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct SessionConfig {
     emulation: Emulation,
     emulation_os: EmulationOS,
@@ -124,8 +125,18 @@ struct SessionEntry {
     config: SessionConfig,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum ClientPurpose {
+    Session,
+    Ephemeral,
+}
+
 struct SessionManager {
     cache: Cache<String, Arc<SessionEntry>>,
+}
+
+struct EphemeralClientManager {
+    cache: Cache<SessionConfig, Arc<HttpClient>>,
 }
 
 pub type ResponseBodyStream = Pin<Box<dyn Stream<Item = wreq::Result<Bytes>> + Send>>;
@@ -229,7 +240,7 @@ impl SessionManager {
     }
 
     fn build_entry(&self, config: SessionConfig) -> Result<Arc<SessionEntry>> {
-        let client = Arc::new(build_client(&config)?);
+        let client = Arc::new(build_client(&config, ClientPurpose::Session)?);
         Ok(Arc::new(SessionEntry { client, config }))
     }
 
@@ -255,22 +266,38 @@ impl SessionManager {
     }
 }
 
-pub async fn make_request(options: RequestOptions) -> Result<Response> {
-    if options.ephemeral {
-        let session_id = options.session_id.clone();
-        let result = make_request_inner(options).await;
-        SESSION_MANAGER.drop_session(&session_id);
-        result
-    } else {
-        make_request_inner(options).await
+impl EphemeralClientManager {
+    fn new() -> Self {
+        Self {
+            cache: Cache::builder()
+                .time_to_idle(Duration::from_secs(300))
+                .build(),
+        }
+    }
+
+    fn client_for(&self, config: SessionConfig) -> Result<Arc<HttpClient>> {
+        if let Some(client) = self.cache.get(&config) {
+            return Ok(client);
+        }
+
+        let client = Arc::new(build_client(&config, ClientPurpose::Ephemeral)?);
+        self.cache.insert(config, client.clone());
+        Ok(client)
     }
 }
 
-async fn make_request_inner(options: RequestOptions) -> Result<Response> {
-    let client = {
-        let config = SessionConfig::from_request(&options);
+pub async fn make_request(options: RequestOptions) -> Result<Response> {
+    let config = SessionConfig::from_request(&options);
+    let client = if options.ephemeral {
+        EPHEMERAL_MANAGER.client_for(config)?
+    } else {
         SESSION_MANAGER.client_for(&options.session_id, config)?
     };
+
+    make_request_inner(options, client).await
+}
+
+async fn make_request_inner(options: RequestOptions, client: Arc<HttpClient>) -> Result<Response> {
 
     let RequestOptions {
         url,
@@ -382,7 +409,7 @@ async fn make_request_inner(options: RequestOptions) -> Result<Response> {
     })
 }
 
-fn build_client(config: &SessionConfig) -> Result<HttpClient> {
+fn build_client(config: &SessionConfig, purpose: ClientPurpose) -> Result<HttpClient> {
     let emulation = EmulationOption::builder()
         .emulation(config.emulation)
         .emulation_os(config.emulation_os)
@@ -390,7 +417,11 @@ fn build_client(config: &SessionConfig) -> Result<HttpClient> {
 
     let mut client_builder = HttpClient::builder()
         .emulation(emulation)
-        .cookie_store(true);
+        .cookie_store(matches!(purpose, ClientPurpose::Session));
+
+    if matches!(purpose, ClientPurpose::Ephemeral) {
+        client_builder = client_builder.pool_max_idle_per_host(0);
+    }
 
     if let Some(proxy_url) = config.proxy.as_deref() {
         let proxy = Proxy::all(proxy_url).context("Failed to create proxy")?;
