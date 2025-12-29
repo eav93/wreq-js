@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
-import { createSession, createTransport, fetch as wreqFetch } from "../../wreq-js.js";
+import { createSession, createTransport, RequestError, fetch as wreqFetch } from "../../wreq-js.js";
 import { httpUrl } from "../helpers/http.js";
 
 describe("Transport API", () => {
@@ -26,6 +26,93 @@ describe("Transport API", () => {
     } finally {
       await transport.close();
     }
+  });
+
+  test("rejects closed transports", async () => {
+    const transport = await createTransport({ browser: "chrome_142" });
+    await transport.close();
+
+    await assert.rejects(
+      wreqFetch(httpUrl("/get"), { transport, timeout: 10_000 }),
+      (error: unknown) => error instanceof RequestError && /Transport has been closed/.test(error.message),
+    );
+  });
+
+  test("rejects transport with browser/os/proxy/insecure overrides", async () => {
+    const transport = await createTransport({ browser: "chrome_142" });
+
+    try {
+      await assert.rejects(
+        wreqFetch(httpUrl("/get"), { transport, browser: "chrome_142" }),
+        (error: unknown) =>
+          error instanceof RequestError && /cannot be combined with browser\/os\/proxy\/insecure/.test(error.message),
+      );
+
+      await assert.rejects(
+        wreqFetch(httpUrl("/get"), { transport, os: "linux" }),
+        (error: unknown) =>
+          error instanceof RequestError && /cannot be combined with browser\/os\/proxy\/insecure/.test(error.message),
+      );
+
+      await assert.rejects(
+        wreqFetch(httpUrl("/get"), { transport, proxy: "http://proxy.example.com:8080" }),
+        (error: unknown) =>
+          error instanceof RequestError && /cannot be combined with browser\/os\/proxy\/insecure/.test(error.message),
+      );
+
+      await assert.rejects(
+        wreqFetch(httpUrl("/get"), { transport, insecure: true }),
+        (error: unknown) =>
+          error instanceof RequestError && /cannot be combined with browser\/os\/proxy\/insecure/.test(error.message),
+      );
+    } finally {
+      await transport.close();
+    }
+  });
+
+  test("rejects invalid pool configuration values", async () => {
+    await assert.rejects(
+      createTransport({ poolIdleTimeout: -1 }),
+      (error: unknown) => error instanceof RequestError && /poolIdleTimeout must be greater than 0/.test(error.message),
+    );
+
+    await assert.rejects(
+      createTransport({ poolMaxIdlePerHost: -1 }),
+      (error: unknown) =>
+        error instanceof RequestError && /poolMaxIdlePerHost must be greater than or equal to 0/.test(error.message),
+    );
+
+    await assert.rejects(
+      createTransport({ poolMaxIdlePerHost: 1.5 }),
+      (error: unknown) => error instanceof RequestError && /poolMaxIdlePerHost must be an integer/.test(error.message),
+    );
+
+    await assert.rejects(
+      createTransport({ poolMaxSize: 0 }),
+      (error: unknown) => error instanceof RequestError && /poolMaxSize must be greater than 0/.test(error.message),
+    );
+
+    await assert.rejects(
+      createTransport({ poolMaxSize: 1.5 }),
+      (error: unknown) => error instanceof RequestError && /poolMaxSize must be an integer/.test(error.message),
+    );
+
+    await assert.rejects(
+      createTransport({ connectTimeout: 0 }),
+      (error: unknown) => error instanceof RequestError && /connectTimeout must be greater than 0/.test(error.message),
+    );
+
+    await assert.rejects(
+      createTransport({ readTimeout: Number.NaN }),
+      (error: unknown) => error instanceof RequestError && /readTimeout must be a finite number/.test(error.message),
+    );
+  });
+
+  test("surfaces transport creation failures", async () => {
+    await assert.rejects(
+      createTransport({ proxy: "http://" }),
+      (error: unknown) => error instanceof RequestError && /Failed to create proxy/.test(error.message),
+    );
   });
 
   test("isolates cookies across sessions sharing a transport", async () => {
