@@ -10,54 +10,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  build_native:
     if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
         include:
-          # x64 tests on all platforms
           - os: ubuntu-24.04
-            node-version: 20
             arch: x64
-          - os: ubuntu-24.04
-            node-version: 22
-            arch: x64
-          - os: ubuntu-24.04
-            node-version: 24
-            arch: x64
+            platform-arch: linux-x64-gnu
           - os: macos-15-intel
-            node-version: 20
             arch: x64
-          - os: macos-15-intel
-            node-version: 22
-            arch: x64
-          - os: macos-15-intel
-            node-version: 24
-            arch: x64
+            platform-arch: darwin-x64
           - os: windows-2022
-            node-version: 20
             arch: x64
-          - os: windows-2022
-            node-version: 22
-            arch: x64
-          - os: windows-2022
-            node-version: 24
-            arch: x64
-          # ARM64 tests on supported platforms
+            platform-arch: win32-x64-msvc
           - os: macos-14
-            node-version: 24
             arch: arm64
+            platform-arch: darwin-arm64
           - os: ubuntu-24.04-arm
-            node-version: 24
             arch: arm64
-          # musl builds (cross-compiled from x86_64)
-          - os: ubuntu-24.04
-            node-version: 24
-            arch: x64
-            target: x86_64-unknown-linux-musl
+            platform-arch: linux-arm64-gnu
 
-    name: "Tests: Node ${{ matrix.node-version }} (${{ matrix.arch }}) - ${{ matrix.os }}${{ matrix.target && format(' [{0}]', matrix.target) || '' }}"
+    name: "Build native addon - ${{ matrix.platform-arch }}"
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -67,7 +42,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: 24
           architecture: ${{ matrix.arch }}
           cache: npm
 
@@ -78,7 +53,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust -> target
-          shared-key: ${{ matrix.target || 'native' }}
+          shared-key: native-${{ matrix.platform-arch }}
 
       - name: Setup NASM (Windows)
         if: runner.os == 'Windows'
@@ -88,31 +63,6 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: nasm -v
-
-      - name: Cache musl cross toolchain (x86_64)
-        if: matrix.target == 'x86_64-unknown-linux-musl'
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/musl-cross
-          key: musl-cross-${{ runner.os }}-x86_64-11-20211120
-
-      - name: Install musl cross toolchain (x86_64)
-        if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: |
-          set -eux
-          rustup target add x86_64-unknown-linux-musl
-
-          TOOLCHAIN_URL="https://github.com/troglobit/misc/releases/download/11-20211120/x86_64-linux-musl-cross.tgz"
-          TOOLCHAIN_DIR="$HOME/musl-cross/x86_64-linux-musl-cross"
-
-          if [ ! -d "$TOOLCHAIN_DIR" ]; then
-            mkdir -p "$HOME/musl-cross"
-            curl -L "$TOOLCHAIN_URL" -o /tmp/x86_64-linux-musl-cross.tgz
-            tar -xzf /tmp/x86_64-linux-musl-cross.tgz -C "$HOME/musl-cross"
-          fi
-
-          echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
 
       - name: Install dependencies
         run: npm ci
@@ -139,8 +89,174 @@ jobs:
           sed -i 's/cfg.build_target("ssl").build();/\/\/ cfg.build_target("ssl").build();/' "$FILE"
           sed -i 's/cfg.build_target("crypto").build()/cfg.build_target("ALL_BUILD").build()/' "$FILE"
 
+      - name: Build native module
+        run: npm run build:rust
+
+      - name: Smoke test native addon
+        env:
+          WREQ_PLATFORM_ARCH: ${{ matrix.platform-arch }}
+        run: node scripts/smoke-native.cjs
+
+      - name: Upload native addon artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: bindings-${{ matrix.platform-arch }}
+          path: rust/*.node
+          if-no-files-found: error
+
+  test:
+    if: github.event_name != 'pull_request'
+    needs: build_native
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # x64 tests on all platforms
+          - os: ubuntu-24.04
+            node-version: 20
+            arch: x64
+            platform-arch: linux-x64-gnu
+          - os: ubuntu-24.04
+            node-version: 22
+            arch: x64
+            platform-arch: linux-x64-gnu
+          - os: ubuntu-24.04
+            node-version: 24
+            arch: x64
+            platform-arch: linux-x64-gnu
+          - os: macos-15-intel
+            node-version: 20
+            arch: x64
+            platform-arch: darwin-x64
+          - os: macos-15-intel
+            node-version: 22
+            arch: x64
+            platform-arch: darwin-x64
+          - os: macos-15-intel
+            node-version: 24
+            arch: x64
+            platform-arch: darwin-x64
+          - os: windows-2022
+            node-version: 20
+            arch: x64
+            platform-arch: win32-x64-msvc
+          - os: windows-2022
+            node-version: 22
+            arch: x64
+            platform-arch: win32-x64-msvc
+          - os: windows-2022
+            node-version: 24
+            arch: x64
+            platform-arch: win32-x64-msvc
+          # ARM64 tests on supported platforms
+          - os: macos-14
+            node-version: 24
+            arch: arm64
+            platform-arch: darwin-arm64
+          - os: ubuntu-24.04-arm
+            node-version: 24
+            arch: arm64
+            platform-arch: linux-arm64-gnu
+
+    name: "Tests: Node ${{ matrix.node-version }} (${{ matrix.arch }}) - ${{ matrix.os }}"
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          architecture: ${{ matrix.arch }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Download native addon artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: bindings-${{ matrix.platform-arch }}
+          path: artifacts
+
+      - name: Place native addon into rust/
+        shell: bash
+        run: |
+          mkdir -p rust
+          find artifacts -name "*.node" -exec cp {} rust/ \;
+          echo "Collected binaries:"
+          ls -la rust/*.node
+
+      - name: Run tests
+        if: "!(matrix.os == 'ubuntu-24.04' && matrix.node-version == 24 && matrix.arch == 'x64')"
+        run: npm exec -- tsx src/test/run-with-local-server.ts
+
+      - name: Run coverage tests
+        if: matrix.os == 'ubuntu-24.04' && matrix.node-version == 24 && matrix.arch == 'x64'
+        run: npm exec -- c8 --reporter=text-summary --reporter=lcov -- tsx src/test/run-with-local-server.ts
+
+      - name: Upload coverage
+        if: matrix.os == 'ubuntu-24.04' && matrix.node-version == 24 && matrix.arch == 'x64'
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-lcov
+          path: coverage
+          if-no-files-found: error
+
+  musl_smoke:
+    if: github.event_name != 'pull_request'
+    name: "Smoke: linux-x64-musl"
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          architecture: x64
+          cache: npm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust -> target
+          shared-key: native-linux-x64-musl
+
+      - name: Cache musl cross toolchain (x86_64)
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/musl-cross
+          key: musl-cross-${{ runner.os }}-x86_64-11-20211120
+
+      - name: Install musl cross toolchain (x86_64)
+        run: |
+          set -eux
+          rustup target add x86_64-unknown-linux-musl
+
+          TOOLCHAIN_URL="https://github.com/troglobit/misc/releases/download/11-20211120/x86_64-linux-musl-cross.tgz"
+          TOOLCHAIN_DIR="$HOME/musl-cross/x86_64-linux-musl-cross"
+
+          if [ ! -d "$TOOLCHAIN_DIR" ]; then
+            mkdir -p "$HOME/musl-cross"
+            curl -L "$TOOLCHAIN_URL" -o /tmp/x86_64-linux-musl-cross.tgz
+            tar -xzf /tmp/x86_64-linux-musl-cross.tgz -C "$HOME/musl-cross"
+          fi
+
+          echo "$TOOLCHAIN_DIR/bin" >> "$GITHUB_PATH"
+
+      - name: Install dependencies
+        run: npm ci
+
       - name: Build Rust module (x86_64 musl target)
-        if: matrix.target == 'x86_64-unknown-linux-musl'
         env:
           CARGO_BUILD_TARGET: x86_64-unknown-linux-musl
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: x86_64-linux-musl-gcc
@@ -152,7 +268,6 @@ jobs:
         run: npm run build:rust
 
       - name: Smoke test musl addon
-        if: matrix.target == 'x86_64-unknown-linux-musl'
         run: |
           docker run --rm \
             -e WREQ_PLATFORM_ARCH=linux-x64-musl \
@@ -160,22 +275,6 @@ jobs:
             -w /app \
             node:20-alpine \
             node scripts/smoke-native.cjs
-
-      - name: Run tests
-        if: "!matrix.target && !(matrix.os == 'ubuntu-24.04' && matrix.node-version == 24 && matrix.arch == 'x64')"
-        run: npm test
-
-      - name: Run coverage tests
-        if: matrix.os == 'ubuntu-24.04' && matrix.node-version == 24 && matrix.arch == 'x64' && !matrix.target
-        run: npm run test:coverage:ci
-
-      - name: Upload coverage
-        if: matrix.os == 'ubuntu-24.04' && matrix.node-version == 24 && matrix.arch == 'x64' && !matrix.target
-        uses: actions/upload-artifact@v6
-        with:
-          name: coverage-lcov
-          path: coverage
-          if-no-files-found: error
 
   lint:
     name: Lint
