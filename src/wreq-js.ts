@@ -7,6 +7,7 @@ import type {
   BrowserProfile,
   CookieMode,
   CreateSessionOptions,
+  CreateTransportOptions,
   EmulationOS,
   HeadersInit,
   HeaderTuple,
@@ -32,13 +33,39 @@ interface NativeWebSocketOptions {
 
 interface NativeSessionOptions {
   sessionId: string;
+}
+
+interface NativeTransportOptions {
   browser: BrowserProfile;
   os: EmulationOS;
   proxy?: string;
+  insecure?: boolean;
+  poolIdleTimeout?: number;
+  poolMaxIdlePerHost?: number;
+  poolMaxSize?: number;
+  connectTimeout?: number;
+  readTimeout?: number;
+}
+
+interface NativeRequestOptions {
+  url: string;
+  method: string;
+  browser?: BrowserProfile;
+  os?: EmulationOS;
+  headers?: HeaderTuple[];
+  body?: Buffer;
+  proxy?: string;
+  timeout?: number;
+  redirect?: "follow" | "manual" | "error";
+  sessionId: string;
+  ephemeral: boolean;
+  disableDefaultHeaders?: boolean;
+  insecure?: boolean;
+  transportId?: string;
 }
 
 let nativeBinding: {
-  request: (options: RequestOptions, requestId: number, enableCancellation?: boolean) => Promise<NativeResponse>;
+  request: (options: NativeRequestOptions, requestId: number, enableCancellation?: boolean) => Promise<NativeResponse>;
   cancelRequest: (requestId: number) => void;
   readBodyChunk: (handleId: number) => Promise<Buffer | null>;
   readBodyAll: (handleId: number) => Promise<Buffer>;
@@ -50,6 +77,8 @@ let nativeBinding: {
   createSession: (options: NativeSessionOptions) => string;
   clearSession: (sessionId: string) => void;
   dropSession: (sessionId: string) => void;
+  createTransport: (options: NativeTransportOptions) => string;
+  dropTransport: (transportId: string) => void;
   getOperatingSystems?: () => string[];
 };
 
@@ -166,6 +195,9 @@ type SessionDefaults = {
   proxy?: string;
   timeout?: number;
   insecure?: boolean;
+  defaultHeaders?: HeaderTuple[];
+  transportId?: string;
+  ownsTransport?: boolean;
 };
 
 type SessionResolution = {
@@ -173,6 +205,14 @@ type SessionResolution = {
   cookieMode: CookieMode;
   dropAfterRequest: boolean;
   defaults?: SessionDefaults;
+};
+
+type TransportResolution = {
+  transportId?: string;
+  browser?: BrowserProfile;
+  os?: EmulationOS;
+  proxy?: string;
+  insecure?: boolean;
 };
 
 function generateSessionId(): string {
@@ -197,6 +237,10 @@ function normalizeSessionOptions(options?: CreateSessionOptions): { sessionId: s
 
   if (options?.insecure !== undefined) {
     defaults.insecure = options.insecure;
+  }
+
+  if (options?.defaultHeaders !== undefined) {
+    defaults.defaultHeaders = headersToTuples(options.defaultHeaders);
   }
 
   return { sessionId, defaults };
@@ -418,6 +462,29 @@ function headersToTuples(init: HeadersInit): HeaderTuple[] {
   }
 
   return out;
+}
+
+function mergeHeaderTuples(
+  defaults: HeaderTuple[] | undefined,
+  overrides: HeadersInit | undefined,
+): HeaderTuple[] | undefined {
+  if (!defaults) {
+    return overrides === undefined ? undefined : headersToTuples(overrides);
+  }
+
+  if (overrides === undefined) {
+    return defaults;
+  }
+
+  const overrideTuples = headersToTuples(overrides);
+  if (overrideTuples.length === 0) {
+    return defaults;
+  }
+
+  const overrideKeys = new Set(overrideTuples.map(([name]) => name.toLowerCase()));
+  const merged = defaults.filter(([name]) => !overrideKeys.has(name.toLowerCase()));
+  merged.push(...overrideTuples);
+  return merged;
 }
 
 type ResponseType = "basic" | "cors" | "error" | "opaque" | "opaqueredirect";
@@ -754,6 +821,33 @@ export class Response {
   }
 }
 
+export class Transport {
+  readonly id: string;
+  private disposed = false;
+
+  constructor(id: string) {
+    this.id = id;
+  }
+
+  get closed(): boolean {
+    return this.disposed;
+  }
+
+  async close(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+
+    this.disposed = true;
+
+    try {
+      nativeBinding.dropTransport(this.id);
+    } catch (error) {
+      throw new RequestError(String(error));
+    }
+  }
+}
+
 export class Session implements SessionHandle {
   readonly id: string;
   private disposed = false;
@@ -776,7 +870,11 @@ export class Session implements SessionHandle {
 
   /** @internal */
   getDefaults(): SessionDefaults {
-    return { ...this.defaults };
+    const snapshot: SessionDefaults = { ...this.defaults };
+    if (this.defaults.defaultHeaders) {
+      snapshot.defaultHeaders = [...this.defaults.defaultHeaders];
+    }
+    return snapshot;
   }
 
   /** @internal */
@@ -786,7 +884,8 @@ export class Session implements SessionHandle {
 
   async fetch(input: string | URL, init?: WreqRequestInit): Promise<Response> {
     this.ensureActive();
-    return fetchWithSession(this, input, init);
+    const config: WreqRequestInit = init ? { ...init, session: this } : { session: this };
+    return fetch(input, config);
   }
 
   async clearCookies(): Promise<void> {
@@ -804,11 +903,31 @@ export class Session implements SessionHandle {
     }
 
     this.disposed = true;
+    const transportId = this.defaults.transportId;
+    const ownsTransport = this.defaults.ownsTransport;
 
     try {
       nativeBinding.dropSession(this.id);
     } catch (error) {
-      throw new RequestError(String(error));
+      if (!ownsTransport || !transportId) {
+        throw new RequestError(String(error));
+      }
+      // Fall through to transport cleanup and surface the original error after.
+      const originalError = error;
+      try {
+        nativeBinding.dropTransport(transportId);
+      } catch {
+        // Ignore transport cleanup errors when a session drop error already occurred.
+      }
+      throw new RequestError(String(originalError));
+    }
+
+    if (ownsTransport && transportId) {
+      try {
+        nativeBinding.dropTransport(transportId);
+      } catch (error) {
+        throw new RequestError(String(error));
+      }
     }
   }
 }
@@ -864,6 +983,71 @@ function resolveSessionContext(config: WreqRequestInit): SessionResolution {
     cookieMode: "ephemeral",
     dropAfterRequest: true,
   };
+}
+
+function resolveTransportContext(config: WreqRequestInit, sessionDefaults?: SessionDefaults): TransportResolution {
+  if (config.transport !== undefined) {
+    if (!(config.transport instanceof Transport)) {
+      throw new RequestError("`transport` must be created via createTransport()");
+    }
+
+    if (config.transport.closed) {
+      throw new RequestError("Transport has been closed");
+    }
+
+    const hasProxy = Object.hasOwn(config as object, "proxy");
+    if (config.browser !== undefined || config.os !== undefined || hasProxy || config.insecure !== undefined) {
+      throw new RequestError("`transport` cannot be combined with browser/os/proxy/insecure options");
+    }
+
+    return { transportId: config.transport.id };
+  }
+
+  if (sessionDefaults?.transportId) {
+    if (config.browser !== undefined) {
+      validateBrowserProfile(config.browser);
+      if (config.browser !== sessionDefaults.browser) {
+        throw new RequestError("Session browser cannot be changed after creation");
+      }
+    }
+
+    if (config.os !== undefined) {
+      validateOperatingSystem(config.os);
+      if (config.os !== sessionDefaults.os) {
+        throw new RequestError("Session operating system cannot be changed after creation");
+      }
+    }
+
+    const initHasProxy = Object.hasOwn(config as object, "proxy");
+    const requestedProxy = initHasProxy ? (config as { proxy?: string | null }).proxy : undefined;
+    if (initHasProxy && requestedProxy !== undefined && (sessionDefaults.proxy ?? null) !== (requestedProxy ?? null)) {
+      throw new RequestError("Session proxy cannot be changed after creation");
+    }
+
+    if (config.insecure !== undefined) {
+      const lockedInsecure = sessionDefaults.insecure ?? false;
+      if (config.insecure !== lockedInsecure) {
+        throw new RequestError("Session insecure setting cannot be changed after creation");
+      }
+    }
+
+    return { transportId: sessionDefaults.transportId };
+  }
+
+  const browser = config.browser ?? DEFAULT_BROWSER;
+  const os = config.os ?? DEFAULT_OS;
+
+  validateBrowserProfile(browser);
+  validateOperatingSystem(os);
+
+  const resolved: TransportResolution = { browser, os };
+  if (config.proxy !== undefined) {
+    resolved.proxy = config.proxy;
+  }
+  if (config.insecure !== undefined) {
+    resolved.insecure = config.insecure;
+  }
+  return resolved;
 }
 
 interface AbortHandler {
@@ -1048,82 +1232,38 @@ function validateTimeout(timeout?: number): void {
   }
 }
 
-async function fetchWithSession(session: Session, input: string | URL, init?: WreqRequestInit): Promise<Response> {
-  const providedSessionId = typeof init?.sessionId === "string" ? init.sessionId.trim() : undefined;
-  if (providedSessionId) {
-    throw new RequestError("Provide either `session` or `sessionId`, not both.");
+function validatePositiveNumber(value: number, label: string): void {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new RequestError(`${label} must be a finite number`);
   }
 
-  const url = coerceUrlInput(input);
-  const method = ensureMethod(init?.method);
-  const body = serializeBody(init?.body ?? null);
-
-  ensureBodyAllowed(method, body);
-  validateRedirectMode(init?.redirect);
-
-  const defaults = session._defaultsRef();
-
-  if (init?.browser != null && init.browser !== defaults.browser) {
-    throw new RequestError("Session browser cannot be changed after creation");
+  if (value <= 0) {
+    throw new RequestError(`${label} must be greater than 0`);
   }
-  if (init?.os != null && init.os !== defaults.os) {
-    throw new RequestError("Session operating system cannot be changed after creation");
+}
+
+function validateNonNegativeInteger(value: number, label: string): void {
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value)) {
+    throw new RequestError(`${label} must be an integer`);
   }
 
-  const initHasProxy = Boolean(init) && Object.hasOwn(init as object, "proxy");
-  const requestedProxy = initHasProxy ? (init as { proxy?: string | null }).proxy : undefined;
-  if (initHasProxy && requestedProxy !== undefined && (defaults.proxy ?? null) !== (requestedProxy ?? null)) {
-    throw new RequestError("Session proxy cannot be changed after creation");
+  if (value < 0) {
+    throw new RequestError(`${label} must be greater than or equal to 0`);
+  }
+}
+
+function validatePositiveInteger(value: number, label: string): void {
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value)) {
+    throw new RequestError(`${label} must be an integer`);
   }
 
-  const timeout = init?.timeout ?? defaults.timeout;
-  if (Boolean(init) && (init as { timeout?: number | null }).timeout !== undefined) {
-    validateTimeout(timeout);
+  if (value <= 0) {
+    throw new RequestError(`${label} must be greater than 0`);
   }
-
-  const insecure = init?.insecure ?? defaults.insecure;
-
-  const headerTuples = init?.headers === undefined ? undefined : headersToTuples(init.headers);
-
-  const requestOptions: RequestOptions = {
-    url,
-    method,
-    browser: defaults.browser,
-    os: defaults.os,
-    sessionId: session.id,
-    ephemeral: false,
-  };
-
-  if (body !== undefined) {
-    requestOptions.body = body;
-  }
-
-  const proxy = requestedProxy ?? defaults.proxy;
-  if (proxy !== undefined) {
-    requestOptions.proxy = proxy;
-  }
-
-  if (timeout !== undefined) {
-    requestOptions.timeout = timeout;
-  }
-  if (init?.redirect !== undefined) {
-    requestOptions.redirect = init.redirect;
-  }
-  if (init?.disableDefaultHeaders !== undefined) {
-    requestOptions.disableDefaultHeaders = init.disableDefaultHeaders;
-  }
-  if (insecure !== undefined) {
-    requestOptions.insecure = insecure;
-  }
-  if (headerTuples && headerTuples.length > 0) {
-    requestOptions.headers = headerTuples;
-  }
-
-  return dispatchRequest(requestOptions, url, init?.signal ?? null);
 }
 
 async function dispatchRequest(
-  options: RequestOptions,
+  options: NativeRequestOptions,
   requestUrl: string,
   signal?: AbortSignal | null,
 ): Promise<Response> {
@@ -1219,38 +1359,11 @@ export async function fetch(input: string | URL, init?: WreqRequestInit): Promis
   const config = init ?? {};
   const sessionContext = resolveSessionContext(config);
   const sessionDefaults = sessionContext.defaults;
-  const browser = config.browser ?? sessionDefaults?.browser ?? DEFAULT_BROWSER;
-  const os = config.os ?? sessionDefaults?.os ?? DEFAULT_OS;
-  const proxy = config.proxy ?? sessionDefaults?.proxy;
-  const timeout = config.timeout ?? sessionDefaults?.timeout;
-  const insecure = config.insecure ?? sessionDefaults?.insecure;
 
   validateRedirectMode(config.redirect);
 
-  // Defaults from a managed session are already validated at creation time; skip re-validating
-  // unless the caller attempts to override them (which would be rejected below).
-  if (!sessionDefaults || config.browser !== undefined) {
-    validateBrowserProfile(browser);
-  }
-  if (!sessionDefaults || config.os !== undefined) {
-    validateOperatingSystem(os);
-  }
-  if (!sessionDefaults || config.timeout !== undefined) {
-    validateTimeout(timeout);
-  }
-
-  if (sessionDefaults) {
-    if (browser !== sessionDefaults.browser) {
-      throw new RequestError("Session browser cannot be changed after creation");
-    }
-
-    if (os !== sessionDefaults.os) {
-      throw new RequestError("Session operating system cannot be changed after creation");
-    }
-
-    if (config.proxy !== undefined && config.proxy !== sessionDefaults.proxy) {
-      throw new RequestError("Session proxy cannot be changed after creation");
-    }
+  if (config.timeout !== undefined) {
+    validateTimeout(config.timeout);
   }
 
   const method = ensureMethod(config.method);
@@ -1260,13 +1373,14 @@ export async function fetch(input: string | URL, init?: WreqRequestInit): Promis
 
   // Only normalize headers when provided; avoids per-request header allocations on hot paths.
   // If the caller already provides HeaderTuple[], pass it through.
-  const headerTuples = config.headers === undefined ? undefined : headersToTuples(config.headers);
+  const headerTuples = mergeHeaderTuples(sessionDefaults?.defaultHeaders, config.headers);
 
-  const requestOptions: RequestOptions = {
+  const transport = resolveTransportContext(config, sessionDefaults);
+  const timeout = config.timeout ?? sessionDefaults?.timeout;
+
+  const requestOptions: NativeRequestOptions = {
     url,
     method,
-    browser,
-    os,
     sessionId: sessionContext.sessionId,
     ephemeral: sessionContext.dropAfterRequest,
   };
@@ -1274,9 +1388,20 @@ export async function fetch(input: string | URL, init?: WreqRequestInit): Promis
   if (body !== undefined) {
     requestOptions.body = body;
   }
-  if (proxy !== undefined) {
-    requestOptions.proxy = proxy;
+
+  if (transport.transportId) {
+    requestOptions.transportId = transport.transportId;
+  } else {
+    requestOptions.browser = transport.browser ?? DEFAULT_BROWSER;
+    requestOptions.os = transport.os ?? DEFAULT_OS;
+    if (transport.proxy !== undefined) {
+      requestOptions.proxy = transport.proxy;
+    }
+    if (transport.insecure !== undefined) {
+      requestOptions.insecure = transport.insecure;
+    }
   }
+
   if (timeout !== undefined) {
     requestOptions.timeout = timeout;
   }
@@ -1286,15 +1411,54 @@ export async function fetch(input: string | URL, init?: WreqRequestInit): Promis
   if (config.disableDefaultHeaders !== undefined) {
     requestOptions.disableDefaultHeaders = config.disableDefaultHeaders;
   }
-  if (insecure !== undefined) {
-    requestOptions.insecure = insecure;
-  }
 
   if (headerTuples && headerTuples.length > 0) {
     requestOptions.headers = headerTuples;
   }
 
   return dispatchRequest(requestOptions, url, config.signal ?? null);
+}
+
+export async function createTransport(options?: CreateTransportOptions): Promise<Transport> {
+  const browser = options?.browser ?? DEFAULT_BROWSER;
+  const os = options?.os ?? DEFAULT_OS;
+
+  validateBrowserProfile(browser);
+  validateOperatingSystem(os);
+
+  if (options?.poolIdleTimeout !== undefined) {
+    validatePositiveNumber(options.poolIdleTimeout, "poolIdleTimeout");
+  }
+  if (options?.poolMaxIdlePerHost !== undefined) {
+    validateNonNegativeInteger(options.poolMaxIdlePerHost, "poolMaxIdlePerHost");
+  }
+  if (options?.poolMaxSize !== undefined) {
+    validatePositiveInteger(options.poolMaxSize, "poolMaxSize");
+  }
+  if (options?.connectTimeout !== undefined) {
+    validatePositiveNumber(options.connectTimeout, "connectTimeout");
+  }
+  if (options?.readTimeout !== undefined) {
+    validatePositiveNumber(options.readTimeout, "readTimeout");
+  }
+
+  try {
+    const id = nativeBinding.createTransport({
+      browser,
+      os,
+      ...(options?.proxy !== undefined && { proxy: options.proxy }),
+      ...(options?.insecure !== undefined && { insecure: options.insecure }),
+      ...(options?.poolIdleTimeout !== undefined && { poolIdleTimeout: options.poolIdleTimeout }),
+      ...(options?.poolMaxIdlePerHost !== undefined && { poolMaxIdlePerHost: options.poolMaxIdlePerHost }),
+      ...(options?.poolMaxSize !== undefined && { poolMaxSize: options.poolMaxSize }),
+      ...(options?.connectTimeout !== undefined && { connectTimeout: options.connectTimeout }),
+      ...(options?.readTimeout !== undefined && { readTimeout: options.readTimeout }),
+    });
+
+    return new Transport(id);
+  } catch (error) {
+    throw new RequestError(String(error));
+  }
 }
 
 export async function createSession(options?: CreateSessionOptions): Promise<Session> {
@@ -1304,10 +1468,10 @@ export async function createSession(options?: CreateSessionOptions): Promise<Ses
   validateOperatingSystem(defaults.os);
 
   let createdId: string;
+  let transportId: string;
 
   try {
-    createdId = nativeBinding.createSession({
-      sessionId,
+    transportId = nativeBinding.createTransport({
       browser: defaults.browser,
       os: defaults.os,
       ...(defaults.proxy !== undefined && { proxy: defaults.proxy }),
@@ -1316,6 +1480,22 @@ export async function createSession(options?: CreateSessionOptions): Promise<Ses
   } catch (error) {
     throw new RequestError(String(error));
   }
+
+  try {
+    createdId = nativeBinding.createSession({
+      sessionId,
+    });
+  } catch (error) {
+    try {
+      nativeBinding.dropTransport(transportId);
+    } catch {
+      // Best-effort cleanup; prefer surfacing the original error.
+    }
+    throw new RequestError(String(error));
+  }
+
+  defaults.transportId = transportId;
+  defaults.ownsTransport = true;
 
   return new Session(createdId, defaults);
 }
@@ -1374,6 +1554,10 @@ export async function request(options: RequestOptions): Promise<Response> {
 
   if (rest.sessionId !== undefined) {
     init.sessionId = rest.sessionId;
+  }
+
+  if (rest.transport !== undefined) {
+    init.transport = rest.transport;
   }
 
   if (rest.disableDefaultHeaders !== undefined) {
@@ -1576,6 +1760,7 @@ export type {
   BrowserProfile,
   CookieMode,
   CreateSessionOptions,
+  CreateTransportOptions,
   EmulationOS,
   HeadersInit,
   RequestInit,
@@ -1593,11 +1778,13 @@ export default {
   post,
   getProfiles,
   getOperatingSystems,
+  createTransport,
   createSession,
   withSession,
   websocket,
   WebSocket,
   Headers,
   Response,
+  Transport,
   Session,
 };

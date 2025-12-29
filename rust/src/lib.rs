@@ -5,7 +5,8 @@ mod websocket;
 use anyhow::anyhow;
 use client::{
     HTTP_RUNTIME, RedirectMode, RequestOptions, Response, clear_managed_session,
-    create_managed_session, drop_body_stream, drop_managed_session, generate_session_id,
+    create_managed_session, create_managed_transport, drop_body_stream,
+    drop_managed_session, drop_managed_transport, generate_session_id,
     make_request, read_body_chunk as native_read_body_chunk,
     read_body_all as native_read_body_all,
 };
@@ -255,6 +256,37 @@ fn js_object_to_request_options(
         .map(|v| v.value(cx))
         .unwrap_or(false);
 
+    let transport_id = obj
+        .get_opt(cx, "transportId")?
+        .and_then(|v: Handle<JsValue>| v.downcast::<JsString, _>(cx).ok())
+        .map(|v| v.value(cx))
+        .filter(|v| !v.trim().is_empty());
+
+    let pool_idle_timeout = obj
+        .get_opt(cx, "poolIdleTimeout")?
+        .and_then(|v: Handle<JsValue>| v.downcast::<JsNumber, _>(cx).ok())
+        .map(|v| v.value(cx) as u64);
+
+    let pool_max_idle_per_host = obj
+        .get_opt(cx, "poolMaxIdlePerHost")?
+        .and_then(|v: Handle<JsValue>| v.downcast::<JsNumber, _>(cx).ok())
+        .map(|v| v.value(cx) as usize);
+
+    let pool_max_size = obj
+        .get_opt(cx, "poolMaxSize")?
+        .and_then(|v: Handle<JsValue>| v.downcast::<JsNumber, _>(cx).ok())
+        .map(|v| v.value(cx) as u32);
+
+    let connect_timeout = obj
+        .get_opt(cx, "connectTimeout")?
+        .and_then(|v: Handle<JsValue>| v.downcast::<JsNumber, _>(cx).ok())
+        .map(|v| v.value(cx) as u64);
+
+    let read_timeout = obj
+        .get_opt(cx, "readTimeout")?
+        .and_then(|v: Handle<JsValue>| v.downcast::<JsNumber, _>(cx).ok())
+        .map(|v| v.value(cx) as u64);
+
     Ok(RequestOptions {
         url,
         emulation,
@@ -269,6 +301,12 @@ fn js_object_to_request_options(
         ephemeral,
         disable_default_headers,
         insecure,
+        transport_id,
+        pool_idle_timeout,
+        pool_max_idle_per_host,
+        pool_max_size,
+        connect_timeout,
+        read_timeout,
     })
 }
 
@@ -435,15 +473,50 @@ fn get_operating_systems(mut cx: FunctionContext) -> JsResult<JsArray> {
 fn create_session(mut cx: FunctionContext) -> JsResult<JsString> {
     let options_value = cx.argument_opt(0);
 
-    let (session_id_opt, browser_opt, os_opt, proxy_opt, insecure_opt) = if let Some(value) = options_value {
+    let session_id_opt = if let Some(value) = options_value {
         if value.is_a::<JsUndefined, _>(&mut cx) || value.is_a::<JsNull, _>(&mut cx) {
-            (None, None, None, None, None)
+            None
         } else {
             let obj = value.downcast_or_throw::<JsObject, _>(&mut cx)?;
             let session_id = obj
                 .get_opt(&mut cx, "sessionId")?
                 .and_then(|v: Handle<JsValue>| v.downcast::<JsString, _>(&mut cx).ok())
                 .map(|v| v.value(&mut cx));
+            session_id
+        }
+    } else {
+        None
+    };
+
+    let session_id = session_id_opt.unwrap_or_else(generate_session_id);
+
+    match create_managed_session(session_id.clone()) {
+        Ok(id) => Ok(cx.string(id)),
+        Err(e) => {
+            let msg = format!("{:#}", e);
+            cx.throw_error(msg)
+        }
+    }
+}
+
+fn create_transport(mut cx: FunctionContext) -> JsResult<JsString> {
+    let options_value = cx.argument_opt(0);
+
+    let (
+        browser_opt,
+        os_opt,
+        proxy_opt,
+        insecure_opt,
+        pool_idle_timeout_opt,
+        pool_max_idle_per_host_opt,
+        pool_max_size_opt,
+        connect_timeout_opt,
+        read_timeout_opt,
+    ) = if let Some(value) = options_value {
+        if value.is_a::<JsUndefined, _>(&mut cx) || value.is_a::<JsNull, _>(&mut cx) {
+            (None, None, None, None, None, None, None, None, None)
+        } else {
+            let obj = value.downcast_or_throw::<JsObject, _>(&mut cx)?;
             let browser = obj
                 .get_opt(&mut cx, "browser")?
                 .and_then(|v: Handle<JsValue>| v.downcast::<JsString, _>(&mut cx).ok())
@@ -460,20 +533,60 @@ fn create_session(mut cx: FunctionContext) -> JsResult<JsString> {
                 .get_opt(&mut cx, "insecure")?
                 .and_then(|v: Handle<JsValue>| v.downcast::<JsBoolean, _>(&mut cx).ok())
                 .map(|v| v.value(&mut cx));
-            (session_id, browser, os, proxy, insecure)
+            let pool_idle_timeout = obj
+                .get_opt(&mut cx, "poolIdleTimeout")?
+                .and_then(|v: Handle<JsValue>| v.downcast::<JsNumber, _>(&mut cx).ok())
+                .map(|v| v.value(&mut cx) as u64);
+            let pool_max_idle_per_host = obj
+                .get_opt(&mut cx, "poolMaxIdlePerHost")?
+                .and_then(|v: Handle<JsValue>| v.downcast::<JsNumber, _>(&mut cx).ok())
+                .map(|v| v.value(&mut cx) as usize);
+            let pool_max_size = obj
+                .get_opt(&mut cx, "poolMaxSize")?
+                .and_then(|v: Handle<JsValue>| v.downcast::<JsNumber, _>(&mut cx).ok())
+                .map(|v| v.value(&mut cx) as u32);
+            let connect_timeout = obj
+                .get_opt(&mut cx, "connectTimeout")?
+                .and_then(|v: Handle<JsValue>| v.downcast::<JsNumber, _>(&mut cx).ok())
+                .map(|v| v.value(&mut cx) as u64);
+            let read_timeout = obj
+                .get_opt(&mut cx, "readTimeout")?
+                .and_then(|v: Handle<JsValue>| v.downcast::<JsNumber, _>(&mut cx).ok())
+                .map(|v| v.value(&mut cx) as u64);
+
+            (
+                browser,
+                os,
+                proxy,
+                insecure,
+                pool_idle_timeout,
+                pool_max_idle_per_host,
+                pool_max_size,
+                connect_timeout,
+                read_timeout,
+            )
         }
     } else {
-        (None, None, None, None, None)
+        (None, None, None, None, None, None, None, None, None)
     };
 
-    let session_id = session_id_opt.unwrap_or_else(generate_session_id);
     let browser_str = browser_opt.unwrap_or_else(|| "chrome_142".to_string());
     let os_str = os_opt.unwrap_or_else(|| "macos".to_string());
     let emulation = parse_emulation(&browser_str);
     let emulation_os = parse_emulation_os(&os_str);
     let insecure = insecure_opt.unwrap_or(false);
 
-    match create_managed_session(session_id.clone(), emulation, emulation_os, proxy_opt, insecure) {
+    match create_managed_transport(
+        emulation,
+        emulation_os,
+        proxy_opt,
+        insecure,
+        pool_idle_timeout_opt,
+        pool_max_idle_per_host_opt,
+        pool_max_size_opt,
+        connect_timeout_opt,
+        read_timeout_opt,
+    ) {
         Ok(id) => Ok(cx.string(id)),
         Err(e) => {
             let msg = format!("{:#}", e);
@@ -490,6 +603,12 @@ fn clear_session(mut cx: FunctionContext) -> JsResult<JsUndefined> {
         return cx.throw_error(msg);
     }
 
+    Ok(cx.undefined())
+}
+
+fn drop_transport(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+    let transport_id = cx.argument::<JsString>(0)?.value(&mut cx);
+    drop_managed_transport(&transport_id);
     Ok(cx.undefined())
 }
 
@@ -888,6 +1007,8 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("createSession", create_session)?;
     cx.export_function("clearSession", clear_session)?;
     cx.export_function("dropSession", drop_session)?;
+    cx.export_function("createTransport", create_transport)?;
+    cx.export_function("dropTransport", drop_transport)?;
     cx.export_function("websocketConnect", websocket_connect)?;
     cx.export_function("websocketSend", websocket_send)?;
     cx.export_function("websocketClose", websocket_close)?;

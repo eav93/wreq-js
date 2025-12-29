@@ -13,6 +13,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 use wreq::{Client as HttpClient, Method, Proxy, redirect};
+use wreq::cookie::Jar;
 use wreq_util::{Emulation, EmulationOS, EmulationOption};
 
 pub static HTTP_RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
@@ -24,6 +25,7 @@ pub static HTTP_RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
 
 static SESSION_MANAGER: LazyLock<SessionManager> = LazyLock::new(SessionManager::new);
 static EPHEMERAL_MANAGER: LazyLock<EphemeralClientManager> = LazyLock::new(EphemeralClientManager::new);
+static TRANSPORT_MANAGER: LazyLock<TransportManager> = LazyLock::new(TransportManager::new);
 
 // Responses at or below this size (bytes) are fully buffered in Rust and returned
 // inline to Node, avoiding an extra round-trip to stream the body.
@@ -64,6 +66,12 @@ pub struct RequestOptions {
     pub ephemeral: bool,
     pub disable_default_headers: bool,
     pub insecure: bool,
+    pub transport_id: Option<String>,
+    pub pool_idle_timeout: Option<u64>,
+    pub pool_max_idle_per_host: Option<usize>,
+    pub pool_max_size: Option<u32>,
+    pub connect_timeout: Option<u64>,
+    pub read_timeout: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -95,40 +103,75 @@ impl SessionConfig {
             insecure: options.insecure,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct TransportConfig {
+    emulation: Emulation,
+    emulation_os: EmulationOS,
+    proxy: Option<Arc<str>>,
+    insecure: bool,
+    pool_idle_timeout: Option<Duration>,
+    pool_max_idle_per_host: Option<usize>,
+    pool_max_size: Option<u32>,
+    connect_timeout: Option<Duration>,
+    read_timeout: Option<Duration>,
+}
+
+impl TransportConfig {
+    #[inline]
+    fn from_request(options: &RequestOptions) -> Self {
+        Self {
+            emulation: options.emulation,
+            emulation_os: options.emulation_os,
+            proxy: options.proxy.clone(),
+            insecure: options.insecure,
+            pool_idle_timeout: options.pool_idle_timeout.map(Duration::from_millis),
+            pool_max_idle_per_host: options.pool_max_idle_per_host,
+            pool_max_size: options.pool_max_size,
+            connect_timeout: options.connect_timeout.map(Duration::from_millis),
+            read_timeout: options.read_timeout.map(Duration::from_millis),
+        }
+    }
 
     #[inline]
-    fn new(emulation: Emulation, emulation_os: EmulationOS, proxy: Option<Arc<str>>, insecure: bool) -> Self {
+    fn new(
+        emulation: Emulation,
+        emulation_os: EmulationOS,
+        proxy: Option<Arc<str>>,
+        insecure: bool,
+        pool_idle_timeout: Option<u64>,
+        pool_max_idle_per_host: Option<usize>,
+        pool_max_size: Option<u32>,
+        connect_timeout: Option<u64>,
+        read_timeout: Option<u64>,
+    ) -> Self {
         Self {
             emulation,
             emulation_os,
             proxy,
             insecure,
+            pool_idle_timeout: pool_idle_timeout.map(Duration::from_millis),
+            pool_max_idle_per_host,
+            pool_max_size,
+            connect_timeout: connect_timeout.map(Duration::from_millis),
+            read_timeout: read_timeout.map(Duration::from_millis),
         }
-    }
-
-    #[inline]
-    fn matches(&self, other: &SessionConfig) -> bool {
-        // Compare enum values directly (cheap integer comparisons) instead of
-        // serializing to strings. Sessions must also match on insecure setting
-        // to prevent reusing a client with different certificate verification
-        // settings (security critical).
-        self.emulation == other.emulation
-            && self.emulation_os == other.emulation_os
-            && self.proxy == other.proxy
-            && self.insecure == other.insecure
     }
 }
 
 #[derive(Clone)]
-struct SessionEntry {
+struct TransportEntry {
     client: Arc<HttpClient>,
-    config: SessionConfig,
 }
 
-#[derive(Clone, Copy, Debug)]
-enum ClientPurpose {
-    Session,
-    Ephemeral,
+#[derive(Clone)]
+struct SessionEntry {
+    cookie_jar: Arc<Jar>,
+}
+
+struct TransportManager {
+    explicit: DashMap<String, Arc<TransportEntry>>,
 }
 
 struct SessionManager {
@@ -213,6 +256,33 @@ pub fn drop_body_stream(handle: u64) {
     BODY_STREAMS.remove(&handle);
 }
 
+impl TransportManager {
+    fn new() -> Self {
+        Self {
+            explicit: DashMap::new(),
+        }
+    }
+
+    fn create_transport(&self, config: TransportConfig) -> Result<String> {
+        let client = Arc::new(build_client(&config)?);
+        let entry = Arc::new(TransportEntry { client });
+        let id = Uuid::new_v4().to_string();
+        self.explicit.insert(id.clone(), entry);
+        Ok(id)
+    }
+
+    fn get_transport(&self, transport_id: &str) -> Result<Arc<HttpClient>> {
+        self.explicit
+            .get(transport_id)
+            .map(|entry| entry.client.clone())
+            .ok_or_else(|| anyhow!("Transport '{}' not found", transport_id))
+    }
+
+    fn drop_transport(&self, transport_id: &str) {
+        self.explicit.remove(transport_id);
+    }
+}
+
 impl SessionManager {
     fn new() -> Self {
         Self {
@@ -222,42 +292,32 @@ impl SessionManager {
         }
     }
 
-    fn client_for(&self, session_id: &str, config: SessionConfig) -> Result<Arc<HttpClient>> {
+    fn jar_for(&self, session_id: &str) -> Result<Arc<Jar>> {
         if let Some(entry) = self.cache.get(session_id) {
-            if entry.config.matches(&config) {
-                return Ok(entry.client.clone());
-            } else {
-                anyhow::bail!(
-                    "Session '{}' was created with different browser/os/proxy configuration",
-                    session_id
-                );
-            }
+            return Ok(entry.cookie_jar.clone());
         }
 
-        let entry = self.build_entry(config)?;
+        let entry = Arc::new(SessionEntry {
+            cookie_jar: Arc::new(Jar::default()),
+        });
         self.cache.insert(session_id.to_string(), entry.clone());
-        Ok(entry.client.clone())
+        Ok(entry.cookie_jar.clone())
     }
 
-    fn build_entry(&self, config: SessionConfig) -> Result<Arc<SessionEntry>> {
-        let client = Arc::new(build_client(&config, ClientPurpose::Session)?);
-        Ok(Arc::new(SessionEntry { client, config }))
-    }
-
-    fn create_session(&self, session_id: String, config: SessionConfig) -> Result<String> {
-        let entry = self.build_entry(config)?;
+    fn create_session(&self, session_id: String) -> Result<String> {
+        let entry = Arc::new(SessionEntry {
+            cookie_jar: Arc::new(Jar::default()),
+        });
         self.cache.insert(session_id.clone(), entry);
         Ok(session_id)
     }
 
     fn clear_session(&self, session_id: &str) -> Result<()> {
-        let existing = self
+        let entry = self
             .cache
             .get(session_id)
             .ok_or_else(|| anyhow::anyhow!("Session '{}' not found", session_id))?;
-        let config = existing.config.clone();
-        let entry = self.build_entry(config)?;
-        self.cache.insert(session_id.to_string(), entry);
+        entry.cookie_jar.clear();
         Ok(())
     }
 
@@ -280,24 +340,41 @@ impl EphemeralClientManager {
             return Ok(client);
         }
 
-        let client = Arc::new(build_client(&config, ClientPurpose::Ephemeral)?);
+        let client = Arc::new(build_ephemeral_client(&config)?);
         self.cache.insert(config, client.clone());
         Ok(client)
     }
 }
 
 pub async fn make_request(options: RequestOptions) -> Result<Response> {
-    let config = SessionConfig::from_request(&options);
-    let client = if options.ephemeral {
+    let transport_id = options.transport_id.clone();
+
+    // Resolve client: explicit transport > ephemeral cache > fresh client
+    let client = if let Some(ref tid) = transport_id {
+        TRANSPORT_MANAGER.get_transport(tid)?
+    } else if options.ephemeral {
+        let config = SessionConfig::from_request(&options);
         EPHEMERAL_MANAGER.client_for(config)?
     } else {
-        SESSION_MANAGER.client_for(&options.session_id, config)?
+        let config = TransportConfig::from_request(&options);
+        Arc::new(build_client(&config)?)
     };
 
-    make_request_inner(options, client).await
+    // Resolve cookie jar: ephemeral gets a fresh jar, sessions share one
+    let cookie_jar = if options.ephemeral {
+        Arc::new(Jar::default())
+    } else {
+        SESSION_MANAGER.jar_for(&options.session_id)?
+    };
+
+    make_request_inner(options, client, cookie_jar).await
 }
 
-async fn make_request_inner(options: RequestOptions, client: Arc<HttpClient>) -> Result<Response> {
+async fn make_request_inner(
+    options: RequestOptions,
+    client: Arc<HttpClient>,
+    cookie_jar: Arc<Jar>,
+) -> Result<Response> {
 
     let RequestOptions {
         url,
@@ -355,6 +432,8 @@ async fn make_request_inner(options: RequestOptions, client: Arc<HttpClient>) ->
     // Apply timeout
     request = request.timeout(Duration::from_millis(timeout));
 
+    request = request.cookie_provider(cookie_jar);
+
     // Execute request
     let response = request
         .send()
@@ -409,7 +488,51 @@ async fn make_request_inner(options: RequestOptions, client: Arc<HttpClient>) ->
     })
 }
 
-fn build_client(config: &SessionConfig, purpose: ClientPurpose) -> Result<HttpClient> {
+/// Build a client for explicit transports (full pooling config).
+fn build_client(config: &TransportConfig) -> Result<HttpClient> {
+    let emulation = EmulationOption::builder()
+        .emulation(config.emulation)
+        .emulation_os(config.emulation_os)
+        .build();
+
+    let mut client_builder = HttpClient::builder().emulation(emulation);
+
+    if let Some(proxy_url) = config.proxy.as_deref() {
+        let proxy = Proxy::all(proxy_url).context("Failed to create proxy")?;
+        client_builder = client_builder.proxy(proxy);
+    }
+
+    if config.insecure {
+        client_builder = client_builder.cert_verification(false);
+    }
+
+    if let Some(pool_idle_timeout) = config.pool_idle_timeout {
+        client_builder = client_builder.pool_idle_timeout(pool_idle_timeout);
+    }
+
+    if let Some(pool_max_idle_per_host) = config.pool_max_idle_per_host {
+        client_builder = client_builder.pool_max_idle_per_host(pool_max_idle_per_host);
+    }
+
+    if let Some(pool_max_size) = config.pool_max_size {
+        client_builder = client_builder.pool_max_size(pool_max_size);
+    }
+
+    if let Some(connect_timeout) = config.connect_timeout {
+        client_builder = client_builder.connect_timeout(connect_timeout);
+    }
+
+    if let Some(read_timeout) = config.read_timeout {
+        client_builder = client_builder.read_timeout(read_timeout);
+    }
+
+    client_builder
+        .build()
+        .context("Failed to build HTTP client")
+}
+
+/// Build a client for ephemeral (stateless) requests - no connection pooling.
+fn build_ephemeral_client(config: &SessionConfig) -> Result<HttpClient> {
     let emulation = EmulationOption::builder()
         .emulation(config.emulation)
         .emulation_os(config.emulation_os)
@@ -417,11 +540,7 @@ fn build_client(config: &SessionConfig, purpose: ClientPurpose) -> Result<HttpCl
 
     let mut client_builder = HttpClient::builder()
         .emulation(emulation)
-        .cookie_store(matches!(purpose, ClientPurpose::Session));
-
-    if matches!(purpose, ClientPurpose::Ephemeral) {
-        client_builder = client_builder.pool_max_idle_per_host(0);
-    }
+        .pool_max_idle_per_host(0);
 
     if let Some(proxy_url) = config.proxy.as_deref() {
         let proxy = Proxy::all(proxy_url).context("Failed to create proxy")?;
@@ -448,15 +567,8 @@ fn response_allows_body(status: u16, method: &str) -> bool {
     }
 }
 
-pub fn create_managed_session(
-    session_id: String,
-    emulation: Emulation,
-    emulation_os: EmulationOS,
-    proxy: Option<Arc<str>>,
-    insecure: bool,
-) -> Result<String> {
-    let config = SessionConfig::new(emulation, emulation_os, proxy, insecure);
-    SESSION_MANAGER.create_session(session_id, config)
+pub fn create_managed_session(session_id: String) -> Result<String> {
+    SESSION_MANAGER.create_session(session_id)
 }
 
 pub fn clear_managed_session(session_id: &str) -> Result<()> {
@@ -465,6 +577,35 @@ pub fn clear_managed_session(session_id: &str) -> Result<()> {
 
 pub fn drop_managed_session(session_id: &str) {
     SESSION_MANAGER.drop_session(session_id);
+}
+
+pub fn create_managed_transport(
+    emulation: Emulation,
+    emulation_os: EmulationOS,
+    proxy: Option<Arc<str>>,
+    insecure: bool,
+    pool_idle_timeout: Option<u64>,
+    pool_max_idle_per_host: Option<usize>,
+    pool_max_size: Option<u32>,
+    connect_timeout: Option<u64>,
+    read_timeout: Option<u64>,
+) -> Result<String> {
+    let config = TransportConfig::new(
+        emulation,
+        emulation_os,
+        proxy,
+        insecure,
+        pool_idle_timeout,
+        pool_max_idle_per_host,
+        pool_max_size,
+        connect_timeout,
+        read_timeout,
+    );
+    TRANSPORT_MANAGER.create_transport(config)
+}
+
+pub fn drop_managed_transport(transport_id: &str) {
+    TRANSPORT_MANAGER.drop_transport(transport_id);
 }
 
 pub fn generate_session_id() -> String {

@@ -1,6 +1,6 @@
 // Import and re-export the auto-generated BrowserProfile and EmulationOS types
 import type { BrowserProfile, EmulationOS } from "./generated-types.js";
-import type { Session } from "./wreq-js.js";
+import type { Session, Transport } from "./wreq-js.js";
 export type { BrowserProfile, EmulationOS };
 
 /**
@@ -114,8 +114,15 @@ export interface RequestInit {
   redirect?: "follow" | "manual" | "error";
 
   /**
+   * Transport instance to use for this request. When provided, transport-level
+   * options such as `browser`, `os`, `proxy`, and `insecure` must not be set.
+   */
+  transport?: Transport;
+
+  /**
    * Browser profile to impersonate for this request.
    * Automatically applies browser-specific headers, TLS fingerprints, and HTTP/2 settings.
+   * Ignored when `transport` is provided.
    * @default 'chrome_142'
    */
   browser?: BrowserProfile;
@@ -123,6 +130,7 @@ export interface RequestInit {
   /**
    * Operating system to emulate for this request.
    * Influences platform-specific headers and TLS fingerprints.
+   * Ignored when `transport` is provided.
    * @default 'macos'
    */
   os?: EmulationOS;
@@ -130,6 +138,7 @@ export interface RequestInit {
   /**
    * Proxy URL to route the request through (e.g., 'http://proxy.example.com:8080').
    * Supports HTTP and SOCKS5 proxies.
+   * Ignored when `transport` is provided.
    */
   proxy?: string;
 
@@ -169,6 +178,7 @@ export interface RequestInit {
   /**
    * Disable HTTPS certificate verification. When enabled, self-signed and invalid
    * certificates will be accepted.
+   * Ignored when `transport` is provided.
    *
    * # Warning
    *
@@ -190,17 +200,29 @@ export interface CreateSessionOptions {
    * Provide a custom identifier instead of an auto-generated random ID.
    */
   sessionId?: string;
+
+  /**
+   * Default headers applied to every request made through this session.
+   */
+  defaultHeaders?: HeadersInit;
+
   /**
    * Browser profile to bind to this session. Defaults to 'chrome_142'.
+   *
+   * @deprecated Use {@link createTransport} and pass the transport to requests instead.
    */
   browser?: BrowserProfile;
 
   /**
    * Operating system to bind to this session. Defaults to 'macos'.
+   *
+   * @deprecated Use {@link createTransport} and pass the transport to requests instead.
    */
   os?: EmulationOS;
   /**
    * Optional proxy for every request made through the session.
+   *
+   * @deprecated Use {@link createTransport} and pass the transport to requests instead.
    */
   proxy?: string;
   /**
@@ -213,6 +235,8 @@ export interface CreateSessionOptions {
    * Disable HTTPS certificate verification. When enabled, self-signed and invalid
    * certificates will be accepted for all requests made through this session.
    *
+   * @deprecated Use {@link createTransport} and pass the transport to requests instead.
+   *
    * # Warning
    *
    * You should think very carefully before using this method. If invalid
@@ -223,6 +247,56 @@ export interface CreateSessionOptions {
    * @default false
    */
   insecure?: boolean;
+}
+
+/**
+ * Configuration for {@link createTransport}.
+ */
+export interface CreateTransportOptions {
+  /**
+   * Proxy URL to route requests through (e.g., 'http://proxy.example.com:8080').
+   */
+  proxy?: string;
+
+  /**
+   * Browser profile to impersonate for this transport.
+   */
+  browser?: BrowserProfile;
+
+  /**
+   * Operating system to emulate for this transport.
+   */
+  os?: EmulationOS;
+
+  /**
+   * Disable HTTPS certificate verification for this transport.
+   */
+  insecure?: boolean;
+
+  /**
+   * Idle timeout for pooled connections (ms).
+   */
+  poolIdleTimeout?: number;
+
+  /**
+   * Maximum number of idle connections per host.
+   */
+  poolMaxIdlePerHost?: number;
+
+  /**
+   * Maximum total connections in the pool.
+   */
+  poolMaxSize?: number;
+
+  /**
+   * TCP connect timeout (ms).
+   */
+  connectTimeout?: number;
+
+  /**
+   * Read timeout (ms).
+   */
+  readTimeout?: number;
 }
 
 /**
@@ -281,6 +355,12 @@ export interface RequestOptions {
    * Request body data (for POST, PUT, PATCH requests).
    */
   body?: Buffer;
+
+  /**
+   * Transport instance to use for this request. When provided, transport-level
+   * options such as `browser`, `os`, `proxy`, and `insecure` must not be set.
+   */
+  transport?: Transport;
 
   /**
    * Proxy URL to route the request through (e.g., 'http://proxy.example.com:8080').

@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import os from "node:os";
 import { performance } from "node:perf_hooks";
 import process from "node:process";
-import { createSession, fetch as wreqFetch } from "../wreq-js.js";
+import { createSession, createTransport, fetch as wreqFetch } from "../wreq-js.js";
 import { startLocalBenchServer } from "./local-bench-server.js";
 
 type ScenarioResult = {
@@ -408,6 +408,25 @@ async function main() {
       results.push(result);
     } finally {
       await session.close();
+    }
+  }
+
+  if (shouldRun("wreq.transport.get.small")) {
+    const transport = await createTransport();
+    try {
+      const result = await runScenario({
+        name: "wreq.transport.get.small",
+        ...args,
+        makeRequest: async () => {
+          const res = await wreqFetch(urlSmall, { transport });
+          if (res.status !== 200) throw new Error(`status ${res.status}`);
+          const buf = Buffer.from(await res.arrayBuffer());
+          if (buf.length !== SMALL_BODY_LENGTH) throw new Error("bad body length");
+        },
+      });
+      results.push(result);
+    } finally {
+      await transport.close();
     }
   }
 

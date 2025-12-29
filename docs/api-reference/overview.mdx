@@ -11,6 +11,7 @@ wreq-js exports the following functions and classes:
 import {
   // Core functions
   fetch,
+  createTransport,
   createSession,
   withSession,
   websocket,
@@ -23,6 +24,7 @@ import {
   Headers,
   Request,
   Response,
+  Transport,
 } from 'wreq-js';
 ```
 
@@ -31,6 +33,7 @@ import {
 | Function | Description |
 | -------- | ----------- |
 | [`fetch()`](/api-reference/fetch) | Make HTTP requests with browser fingerprinting |
+| [`createTransport()`](/api-reference/transport) | Create a reusable connection pool (ideal per-proxy) |
 | [`createSession()`](/api-reference/sessions) | Create a persistent session with cookie storage |
 | [`withSession()`](/api-reference/sessions#withsession) | Auto-disposing session helper |
 | [`websocket()`](/api-reference/websocket) | Connect to WebSocket servers |
@@ -46,7 +49,9 @@ import type {
   BrowserProfile,
   EmulationOS,
   RequestInit,
+  CreateTransportOptions,
   CreateSessionOptions,
+  Transport,
   Session,
 } from 'wreq-js';
 ```
@@ -80,6 +85,7 @@ interface RequestInit {
   redirect?: 'follow';
   
   // wreq-js extensions
+  transport?: Transport;         // Reusable transport (pool/proxy/browser/os)
   browser?: BrowserProfile;      // Browser fingerprint profile
   os?: EmulationOS;              // Operating system emulation
   proxy?: string;                // Proxy URL

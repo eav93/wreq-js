@@ -1,0 +1,132 @@
+---
+title: Transport
+description: "Reusable connection pool for high-volume requests (especially per-proxy)."
+---
+
+## What is a Transport?
+
+A `Transport` is a reusable network context that owns connection pooling and transport-level settings (browser fingerprint, OS emulation, proxy, TLS verification).
+
+Use it when you want **connection reuse without creating a full session/client per proxy**, e.g. when you have thousands of proxies and want each proxy to keep its own warm pool.
+
+## createTransport()
+
+Create a reusable transport.
+
+### Signature
+
+```typescript
+function createTransport(options?: CreateTransportOptions): Promise<Transport>
+```
+
+### Options
+
+<ParamField path="proxy" type="string">
+  Proxy URL for all requests made through this transport. Supports HTTP and SOCKS5 proxies.
+</ParamField>
+
+<ParamField path="browser" type="BrowserProfile" default="chrome_142">
+  Browser fingerprint profile to use for this transport.
+</ParamField>
+
+<ParamField path="os" type="EmulationOS" default="macos">
+  Operating system to emulate for this transport.
+</ParamField>
+
+<ParamField path="insecure" type="boolean" default="false">
+  When `true`, accepts invalid/self-signed certificates. Use only if you understand the security tradeoffs.
+</ParamField>
+
+<ParamField path="poolIdleTimeout" type="number">
+  Idle timeout for pooled connections (ms).
+</ParamField>
+
+<ParamField path="poolMaxIdlePerHost" type="number">
+  Maximum number of idle connections kept per host.
+</ParamField>
+
+<ParamField path="poolMaxSize" type="number">
+  Maximum total connections across all hosts for this transport.
+</ParamField>
+
+<ParamField path="connectTimeout" type="number">
+  TCP connect timeout (ms).
+</ParamField>
+
+<ParamField path="readTimeout" type="number">
+  Read timeout (ms).
+</ParamField>
+
+## Using a transport with fetch()
+
+Pass the transport via `RequestInit.transport`.
+
+```typescript
+import { createTransport, fetch } from "wreq-js";
+
+const transport = await createTransport({
+  proxy: "http://user:pass@proxy.example.com:8080",
+  browser: "chrome_142",
+  poolMaxSize: 64,
+});
+
+try {
+  const res = await fetch("https://httpbin.org/get", {
+    transport,
+    timeout: 10_000,
+  });
+
+  console.log(res.status);
+} finally {
+  await transport.close();
+}
+```
+
+### Important: request options that become invalid
+
+When you provide `transport`, you must not also set `browser`, `os`, `proxy`, or `insecure` on that request. Those settings are owned by the transport.
+
+## Thousands of proxies: recommended pattern
+
+Create **one transport per proxy**, reuse it for all requests that should go through that proxy, and close transports when you no longer need them.
+
+```typescript
+import { createTransport, fetch, type Transport } from "wreq-js";
+
+const transports = new Map<string, Transport>();
+
+async function getTransportForProxy(proxy: string): Promise<Transport> {
+  const cached = transports.get(proxy);
+  if (cached && !cached.closed) return cached;
+
+  const transport = await createTransport({ proxy, poolMaxSize: 32 });
+  transports.set(proxy, transport);
+  return transport;
+}
+
+export async function fetchViaProxy(url: string, proxy: string) {
+  const transport = await getTransportForProxy(proxy);
+  return fetch(url, { transport, timeout: 30_000 });
+}
+
+export async function shutdown() {
+  await Promise.all([...transports.values()].map((t) => t.close()));
+  transports.clear();
+}
+```
+
+## Transport lifecycle
+
+### transport.close()
+
+Always close transports you create.
+
+```typescript
+await transport.close();
+```
+
+After closing, `transport.closed` becomes `true` and the transport can no longer be used.
+
+## Sharing a transport across cookie jars
+
+If you need separate cookie jars but want to reuse a single connection pool (for example, multiple sessions through the same proxy), you can pass the same transport to multiple `Session.fetch()` calls. Cookies remain isolated by session; the transport is only used for the network layer.
