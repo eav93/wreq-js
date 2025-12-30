@@ -1,0 +1,88 @@
+---
+title: Transport
+description: "Learn how Transport controls connection pooling, proxies, and emulation settings."
+---
+
+## What is a transport?
+
+A **transport** is a reusable network layer that owns:
+
+- **Connection pooling** (HTTP/1.1 keep-alive and HTTP/2 multiplexing)
+- **Transport-level settings** like `proxy`, `browser`, `os`, and `insecure`
+
+Think of it as a "shared network context" you can attach to requests.
+
+## When should I use Transport vs Sessions?
+
+Use the simplest tool that matches your needs:
+
+| You need… | Use | Why |
+| --- | --- | --- |
+| One-off request with maximum isolation | Ephemeral `fetch()` | Fresh cookies/TLS state per call |
+| Multi-step flow with cookies (login, checkout, etc.) | Sessions | Cookies persist across requests |
+| Reuse a single proxy + connection pool across many requests | Transport | You create it once and reuse it |
+| Separate cookie jars, but shared network pool (same proxy) | Sessions + shared Transport | Cookies stay isolated per session, pool is shared |
+
+## Creating and reusing a transport
+
+A common pattern is **one transport per proxy**, reused across many requests:
+
+```typescript
+import { createTransport, fetch } from 'wreq-js';
+
+const transport = await createTransport({
+  proxy: 'http://user:pass@proxy.example.com:8080',
+  browser: 'chrome_142',
+});
+
+try {
+  const r1 = await fetch('https://example.com', { transport });
+  const r2 = await fetch('https://example.com/pricing', { transport });
+
+  console.log(r1.status, r2.status);
+} finally {
+  await transport.close();
+}
+```
+
+## Using Transport with sessions
+
+Sessions are the right default for cookie-based flows. If you want **multiple sessions** (separate cookies) to share a **single pool** (same proxy/emulation), pass the same transport per request:
+
+```typescript
+import { createSession, createTransport } from 'wreq-js';
+
+const transport = await createTransport({
+  proxy: 'http://proxy.example.com:8080',
+  browser: 'chrome_142',
+});
+
+const sessionA = await createSession();
+const sessionB = await createSession();
+
+try {
+  await sessionA.fetch('https://example.com', { transport });
+  await sessionB.fetch('https://example.com', { transport });
+} finally {
+  await Promise.all([sessionA.close(), sessionB.close(), transport.close()]);
+}
+```
+
+## Ownership rules (important)
+
+When you pass a `transport`, it owns `browser`, `os`, `proxy`, and `insecure`.
+
+- Do **not** also set `browser`, `os`, `proxy`, or `insecure` on the request.
+- Prefer creating a separate transport if you need different settings.
+
+## Lifecycle
+
+Always close transports you create:
+
+- Close when you no longer need the pool: `await transport.close()`
+- After closing, the transport can’t be used again
+
+## Related
+
+- API details: `/api-reference/transport`
+- Cookie flows: `/concepts/sessions`

@@ -96,6 +96,8 @@ Each session maintains its own:
 - **TLS cache**: connection state is isolated
 - **Connection pool**: HTTP/2 multiplexing within the session
 
+If you want separate cookie jars but a shared pool (for example, multiple sessions through the same proxy), use a shared **Transport** per request.
+
 ```typescript
 // These sessions are completely isolated
 const session1 = await createSession({ browser: 'chrome_142' });

@@ -24,7 +24,7 @@
           },
           {
             "group": "Concepts",
-            "pages": ["concepts/sessions", "concepts/browser-profiles"]
+            "pages": ["concepts/sessions", "concepts/transport", "concepts/browser-profiles"]
           },
           {
             "group": "Guides",
