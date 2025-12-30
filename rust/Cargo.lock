@@ -1740,7 +1740,7 @@ dependencies = [
 
 [[package]]
 name = "wreq-js"
-version = "1.5.2"
+version = "1.6.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1760,9 +1760,9 @@ dependencies = [
 
 [[package]]
 name = "wreq-util"
-version = "3.0.0-rc.8"
+version = "3.0.0-rc.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f0f8ffacd4d183261d36f08768fcbd617082cd81295274a9bb2fa6e9270ed59"
+checksum = "2430952360874ecff465a5541de6c214a12fc232540a9a35192a7be2115e28a0"
 dependencies = [
  "serde",
  "strum",
@@ -1793,9 +1793,9 @@ dependencies = [
 
 [[package]]
 name = "zmij"
-version = "1.0.2"
+version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f4a4e8e9dc5c62d159f04fcdbe07f4c3fb710415aab4754bf11505501e3251d"
+checksum = "e9747e91771f56fd7893e1164abd78febd14a670ceec257caad15e051de35f06"
 
 [[package]]
 name = "zstd"

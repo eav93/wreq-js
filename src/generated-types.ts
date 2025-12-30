@@ -100,6 +100,7 @@ export type BrowserProfile =
   | 'firefox_143'
   | 'firefox_144'
   | 'firefox_145'
+  | 'firefox_146'
   | 'okhttp_3.9'
   | 'okhttp_3.11'
   | 'okhttp_3.13'
