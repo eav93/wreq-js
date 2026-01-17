@@ -1,24 +1,42 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo, Socket } from "node:net";
+import { dirname, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 
 const WS_MAGIC_STRING = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const CERTS_DIR = resolve(__dirname, "certs");
 
 export interface LocalTestServer {
   httpBaseUrl: string;
   wsUrl: string;
+  httpsSelfSignedUrl: string;
+  httpsExpiredUrl: string;
   close(): Promise<void>;
 }
 
 export async function startLocalTestServer(): Promise<LocalTestServer> {
   let baseUrl = "http://127.0.0.1";
+  let selfSignedBaseUrl = "https://127.0.0.1";
+  let expiredBaseUrl = "https://127.0.0.1";
+
   const sockets = new Set<Socket>();
   const hangingRequests = new Map<string, { closed: boolean }>();
 
-  const server = createServer(async (req, res) => {
+  // Load certificates for HTTPS servers
+  const selfSignedKey = readFileSync(resolve(CERTS_DIR, "self-signed.key"));
+  const selfSignedCert = readFileSync(resolve(CERTS_DIR, "self-signed.crt"));
+  const expiredKey = readFileSync(resolve(CERTS_DIR, "expired.key"));
+  const expiredCert = readFileSync(resolve(CERTS_DIR, "expired.crt"));
+
+  const createRequestHandler = (getBaseUrl: () => string) => async (req: IncomingMessage, res: ServerResponse) => {
     try {
-      await routeHttpRequest(req, res, baseUrl);
+      await routeHttpRequest(req, res, getBaseUrl());
     } catch (error) {
       console.error("Local test server request error:", error);
       if (!res.headersSent) {
@@ -27,15 +45,36 @@ export async function startLocalTestServer(): Promise<LocalTestServer> {
       }
       res.end(JSON.stringify({ error: "internal server error" }));
     }
-  });
+  };
 
-  server.on("connection", (socket: Socket) => {
+  const trackSockets = (socket: Socket) => {
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
     socket.on("error", () => {
       // Ignore connection-level errors during tests to avoid crashing the harness.
     });
-  });
+  };
+
+  // HTTP server
+  const server = createServer(createRequestHandler(() => baseUrl));
+
+  // HTTPS server with self-signed certificate
+  const selfSignedServer = createHttpsServer(
+    { key: selfSignedKey, cert: selfSignedCert },
+    createRequestHandler(() => selfSignedBaseUrl),
+  );
+
+  // HTTPS server with expired certificate
+  const expiredServer = createHttpsServer(
+    { key: expiredKey, cert: expiredCert },
+    createRequestHandler(() => expiredBaseUrl),
+  );
+
+  server.on("connection", trackSockets);
+  selfSignedServer.on("connection", trackSockets);
+  selfSignedServer.on("secureConnection", trackSockets);
+  expiredServer.on("connection", trackSockets);
+  expiredServer.on("secureConnection", trackSockets);
 
   server.on("connect", (req: IncomingMessage, socket: Socket, head: Buffer) => {
     // Respond with a simple JSON body to exercise CONNECT handling without tunneling.
@@ -97,19 +136,73 @@ export async function startLocalTestServer(): Promise<LocalTestServer> {
   baseUrl = `http://127.0.0.1:${address.port}`;
   const wsUrl = `ws://127.0.0.1:${address.port}/ws`;
 
+  // Start HTTPS server with self-signed certificate
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: unknown) => {
+      selfSignedServer.off("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      selfSignedServer.off("error", onError);
+      resolve();
+    };
+
+    selfSignedServer.once("error", onError);
+    selfSignedServer.once("listening", onListening);
+    selfSignedServer.listen(0, "127.0.0.1");
+  });
+
+  const selfSignedAddress = selfSignedServer.address() as AddressInfo | null;
+  if (!selfSignedAddress) {
+    throw new Error("Unable to determine self-signed HTTPS server address");
+  }
+  selfSignedBaseUrl = `https://127.0.0.1:${selfSignedAddress.port}`;
+
+  // Start HTTPS server with expired certificate
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: unknown) => {
+      expiredServer.off("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      expiredServer.off("error", onError);
+      resolve();
+    };
+
+    expiredServer.once("error", onError);
+    expiredServer.once("listening", onListening);
+    expiredServer.listen(0, "127.0.0.1");
+  });
+
+  const expiredAddress = expiredServer.address() as AddressInfo | null;
+  if (!expiredAddress) {
+    throw new Error("Unable to determine expired HTTPS server address");
+  }
+  expiredBaseUrl = `https://127.0.0.1:${expiredAddress.port}`;
+
   const close = async () => {
     for (const socket of sockets) {
       socket.destroy();
     }
 
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => (error ? reject(error) : resolve()));
-    });
+    await Promise.all([
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      }),
+      new Promise<void>((resolve, reject) => {
+        selfSignedServer.close((error) => (error ? reject(error) : resolve()));
+      }),
+      new Promise<void>((resolve, reject) => {
+        expiredServer.close((error) => (error ? reject(error) : resolve()));
+      }),
+    ]);
   };
 
   return {
     httpBaseUrl: baseUrl,
     wsUrl,
+    httpsSelfSignedUrl: selfSignedBaseUrl,
+    httpsExpiredUrl: expiredBaseUrl,
     close,
   };
 

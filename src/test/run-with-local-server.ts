@@ -47,6 +47,8 @@ async function main() {
   const localServer = await startLocalTestServer();
   env.HTTP_TEST_BASE_URL = localServer.httpBaseUrl;
   env.WS_TEST_URL = localServer.wsUrl;
+  env.HTTPS_SELF_SIGNED_URL = localServer.httpsSelfSignedUrl;
+  env.HTTPS_EXPIRED_URL = localServer.httpsExpiredUrl;
 
   const nodeArgs = ["--import", "tsx", "--test", ...defaultTestFiles, ...normalizedExtraArgs];
   const testProcess = spawn(process.execPath, nodeArgs, {

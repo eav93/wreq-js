@@ -2,14 +2,18 @@ import assert from "node:assert";
 import { describe, test } from "node:test";
 import { createSession, fetch as wreqFetch } from "../../wreq-js.js";
 
-// Self-signed certificate test hosts
-const SELF_SIGNED_HOST = "https://self-signed.badssl.com/";
-const EXPIRED_HOST = "https://expired.badssl.com/";
+// Local HTTPS test servers with certificate issues (provided by test runner)
+const SELF_SIGNED_URL = process.env.HTTPS_SELF_SIGNED_URL;
+const EXPIRED_URL = process.env.HTTPS_EXPIRED_URL;
+
+if (!SELF_SIGNED_URL || !EXPIRED_URL) {
+  throw new Error("HTTPS_SELF_SIGNED_URL and HTTPS_EXPIRED_URL must be set by the test runner");
+}
 
 describe("Insecure certificate verification", () => {
   test("rejects self-signed certificates by default", async () => {
     await assert.rejects(
-      wreqFetch(SELF_SIGNED_HOST, {
+      wreqFetch(SELF_SIGNED_URL, {
         browser: "chrome_142",
         timeout: 10_000,
       }),
@@ -24,7 +28,7 @@ describe("Insecure certificate verification", () => {
   });
 
   test("accepts self-signed certificates when insecure is enabled", async () => {
-    const response = await wreqFetch(SELF_SIGNED_HOST, {
+    const response = await wreqFetch(`${SELF_SIGNED_URL}/json`, {
       browser: "chrome_142",
       timeout: 10_000,
       insecure: true,
@@ -38,7 +42,7 @@ describe("Insecure certificate verification", () => {
 
   test("rejects expired certificates by default", async () => {
     await assert.rejects(
-      wreqFetch(EXPIRED_HOST, {
+      wreqFetch(EXPIRED_URL, {
         browser: "chrome_142",
         timeout: 10_000,
       }),
@@ -56,7 +60,7 @@ describe("Insecure certificate verification", () => {
   });
 
   test("accepts expired certificates when insecure is enabled", async () => {
-    const response = await wreqFetch(EXPIRED_HOST, {
+    const response = await wreqFetch(`${EXPIRED_URL}/json`, {
       browser: "chrome_142",
       timeout: 10_000,
       insecure: true,
@@ -73,7 +77,7 @@ describe("Insecure certificate verification", () => {
 
     try {
       await assert.rejects(
-        session.fetch(SELF_SIGNED_HOST, {
+        session.fetch(SELF_SIGNED_URL, {
           timeout: 10_000,
         }),
         (error: unknown) => {
@@ -97,7 +101,7 @@ describe("Insecure certificate verification", () => {
     });
 
     try {
-      const response = await session.fetch(SELF_SIGNED_HOST, {
+      const response = await session.fetch(`${SELF_SIGNED_URL}/json`, {
         timeout: 10_000,
       });
 
@@ -119,11 +123,11 @@ describe("Insecure certificate verification", () => {
 
     try {
       // Test multiple hosts with certificate issues
-      const response1 = await session.fetch(SELF_SIGNED_HOST, {
+      const response1 = await session.fetch(`${SELF_SIGNED_URL}/json`, {
         timeout: 10_000,
       });
 
-      const response2 = await session.fetch(EXPIRED_HOST, {
+      const response2 = await session.fetch(`${EXPIRED_URL}/json`, {
         timeout: 10_000,
       });
 
@@ -137,7 +141,7 @@ describe("Insecure certificate verification", () => {
   test("insecure defaults to false", async () => {
     // Test that omitting the insecure option still validates certificates
     await assert.rejects(
-      wreqFetch(SELF_SIGNED_HOST, {
+      wreqFetch(SELF_SIGNED_URL, {
         browser: "chrome_142",
         timeout: 10_000,
         // insecure not specified, should default to false
@@ -154,7 +158,7 @@ describe("Insecure certificate verification", () => {
 
   test("insecure: false explicitly validates certificates", async () => {
     await assert.rejects(
-      wreqFetch(SELF_SIGNED_HOST, {
+      wreqFetch(SELF_SIGNED_URL, {
         browser: "chrome_142",
         timeout: 10_000,
         insecure: false,
