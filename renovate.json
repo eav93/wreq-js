@@ -7,7 +7,22 @@
   "lockFileMaintenance": {
     "enabled": false
   },
+  "schedule": ["before 9am on monday"],
   "packageRules": [
+    {
+      "description": "Group @types/node updates - released very frequently",
+      "matchPackageNames": ["@types/node"],
+      "groupName": "types/node",
+      "schedule": ["before 9am on the first day of the month"],
+      "automerge": true
+    },
+    {
+      "description": "Group mint docs updates - released frequently",
+      "matchPackageNames": ["mint"],
+      "groupName": "mint",
+      "schedule": ["before 9am on the first day of the month"],
+      "automerge": true
+    },
     {
       "description": "Do not create pin-only PRs. Libraries must use SemVer ranges (e.g. ^1.0.0)",
       "matchUpdateTypes": ["pin", "pinDigest"],
