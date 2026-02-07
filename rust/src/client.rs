@@ -29,7 +29,9 @@ static TRANSPORT_MANAGER: LazyLock<TransportManager> = LazyLock::new(TransportMa
 
 // Responses at or below this size (bytes) are fully buffered in Rust and returned
 // inline to Node, avoiding an extra round-trip to stream the body.
-const INLINE_BODY_MAX: u64 = 64 * 1024;
+// Most API responses fit within 2 MiB; inlining them skips DashMap, Mutex, and an
+// additional FFI round-trip that the streaming path would otherwise require.
+const INLINE_BODY_MAX: u64 = 2 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub enum RedirectMode {
