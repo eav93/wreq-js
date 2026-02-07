@@ -83,7 +83,9 @@ let nativeBinding: {
 };
 
 let cachedProfiles: BrowserProfile[] | undefined;
+let cachedProfileSet: Set<string> | undefined;
 let cachedOperatingSystems: EmulationOS[] | undefined;
+let cachedOperatingSystemSet: Set<string> | undefined;
 
 function detectLibc(): "gnu" | "musl" | undefined {
   if (process.platform !== "linux") {
@@ -423,7 +425,7 @@ export class Headers implements Iterable<[string, string]> {
 function headersToTuples(init: HeadersInit): HeaderTuple[] {
   // Fast paths for common high-throughput cases.
   if (Array.isArray(init)) {
-    return init as HeaderTuple[];
+    return (init as HeaderTuple[]).slice();
   }
 
   if (init instanceof Headers) {
@@ -481,9 +483,19 @@ function mergeHeaderTuples(
     return defaults;
   }
 
-  const overrideKeys = new Set(overrideTuples.map(([name]) => name.toLowerCase()));
-  const merged = defaults.filter(([name]) => !overrideKeys.has(name.toLowerCase()));
-  merged.push(...overrideTuples);
+  const overrideKeys = new Set<string>();
+  for (const tuple of overrideTuples) {
+    overrideKeys.add(tuple[0].toLowerCase());
+  }
+  const merged: HeaderTuple[] = [];
+  for (const tuple of defaults) {
+    if (!overrideKeys.has(tuple[0].toLowerCase())) {
+      merged.push(tuple);
+    }
+  }
+  for (const tuple of overrideTuples) {
+    merged.push(tuple);
+  }
   return merged;
 }
 
@@ -802,7 +814,7 @@ export class Response {
         return await nativeBinding.readBodyAll(this.payload.bodyHandle);
       } catch (error) {
         // Handle already consumed or error
-        if (String(error).includes("not found")) {
+        if (String(error).includes("Body handle") && String(error).includes("not found")) {
           return Buffer.alloc(0);
         }
         throw error;
@@ -1088,8 +1100,10 @@ function createAbortError(reason?: unknown): Error {
   }
 
   if (reason instanceof Error) {
-    reason.name = "AbortError";
-    return reason;
+    const error = new Error(reason.message);
+    error.name = "AbortError";
+    error.cause = reason;
+    return error;
   }
 
   if (typeof DOMException !== "undefined") {
@@ -1224,10 +1238,8 @@ function validateBrowserProfile(browser?: BrowserProfile): void {
     return;
   }
 
-  const profiles = getProfiles();
-
-  if (!profiles.includes(browser)) {
-    throw new RequestError(`Invalid browser profile: ${browser}. Available profiles: ${profiles.join(", ")}`);
+  if (!getProfileSet().has(browser)) {
+    throw new RequestError(`Invalid browser profile: ${browser}. Available profiles: ${getProfiles().join(", ")}`);
   }
 }
 
@@ -1236,10 +1248,8 @@ function validateOperatingSystem(os?: EmulationOS): void {
     return;
   }
 
-  const operatingSystems = getOperatingSystems();
-
-  if (!operatingSystems.includes(os)) {
-    throw new RequestError(`Invalid operating system: ${os}. Available options: ${operatingSystems.join(", ")}`);
+  if (!getOperatingSystemSet().has(os)) {
+    throw new RequestError(`Invalid operating system: ${os}. Available options: ${getOperatingSystems().join(", ")}`);
   }
 }
 
@@ -1318,12 +1328,9 @@ async function dispatchRequest(
     }
   };
 
-  const abortHandler = setupAbort(signal, cancelNative);
-  if (!abortHandler) {
-    // setupAbort only returns null when the signal is already aborted; treat as immediate abort.
-    cancelNative();
-    throw createAbortError(signal.reason);
-  }
+  // setupAbort throws if signal is already aborted; it only returns null when signal is falsy
+  // (which is impossible here since we checked `!signal` above). The non-null assertion is safe.
+  const abortHandler = setupAbort(signal, cancelNative)!;
 
   const pending = Promise.race([nativeBinding.request(options, requestId, true), abortHandler.promise]);
 
@@ -1617,6 +1624,14 @@ export function getProfiles(): BrowserProfile[] {
   return cachedProfiles;
 }
 
+function getProfileSet(): Set<string> {
+  if (!cachedProfileSet) {
+    cachedProfileSet = new Set(getProfiles());
+  }
+
+  return cachedProfileSet;
+}
+
 /**
  * Get list of supported operating systems for emulation.
  *
@@ -1629,6 +1644,14 @@ export function getOperatingSystems(): EmulationOS[] {
   }
 
   return cachedOperatingSystems;
+}
+
+function getOperatingSystemSet(): Set<string> {
+  if (!cachedOperatingSystemSet) {
+    cachedOperatingSystemSet = new Set(getOperatingSystems());
+  }
+
+  return cachedOperatingSystemSet;
 }
 
 /**
