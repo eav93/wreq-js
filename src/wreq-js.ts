@@ -1328,9 +1328,9 @@ async function dispatchRequest(
     }
   };
 
-  // setupAbort throws if signal is already aborted; it only returns null when signal is falsy
-  // (which is impossible here since we checked `!signal` above). The non-null assertion is safe.
-  const abortHandler = setupAbort(signal, cancelNative)!;
+  // setupAbort throws if signal is already aborted and returns null only when signal is falsy
+  // (impossible here since we checked `!signal` above). Cast is safe; avoids non-null assertion lint.
+  const abortHandler = setupAbort(signal, cancelNative) as AbortHandler;
 
   const pending = Promise.race([nativeBinding.request(options, requestId, true), abortHandler.promise]);
 
