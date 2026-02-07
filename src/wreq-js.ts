@@ -217,6 +217,13 @@ type TransportResolution = {
   insecure?: boolean;
 };
 
+// Persistent sessions need globally-unique IDs; ephemeral ones only need a
+// placeholder that is never looked up again, so a cheap monotonic counter suffices.
+let ephemeralIdCounter = 0;
+function generateEphemeralSessionId(): string {
+  return `_e${++ephemeralIdCounter}`;
+}
+
 function generateSessionId(): string {
   return randomUUID();
 }
@@ -424,8 +431,9 @@ export class Headers implements Iterable<[string, string]> {
 
 function headersToTuples(init: HeadersInit): HeaderTuple[] {
   // Fast paths for common high-throughput cases.
+  // Array inputs are not copied; callers that need isolation must copy themselves.
   if (Array.isArray(init)) {
-    return (init as HeaderTuple[]).slice();
+    return init as HeaderTuple[];
   }
 
   if (init instanceof Headers) {
@@ -749,6 +757,10 @@ export class Response {
     const { buffer, byteOffset, byteLength } = bytes;
 
     if (buffer instanceof ArrayBuffer) {
+      // Zero-copy when the Buffer owns the entire ArrayBuffer.
+      if (byteOffset === 0 && byteLength === buffer.byteLength) {
+        return buffer;
+      }
       return buffer.slice(byteOffset, byteOffset + byteLength);
     }
 
@@ -1016,7 +1028,7 @@ function resolveSessionContext(config: WreqRequestInit): SessionResolution {
   }
 
   return {
-    sessionId: generateSessionId(),
+    sessionId: generateEphemeralSessionId(),
     cookieMode: "ephemeral",
     dropAfterRequest: true,
   };
@@ -1165,13 +1177,25 @@ function setupAbort(signal: AbortSignal | null | undefined, cancelNative: () => 
 }
 
 function coerceUrlInput(input: string | URL): string {
-  const value = typeof input === "string" ? input.trim() : input.href;
+  if (typeof input !== "string") {
+    return input.href;
+  }
 
-  if (!value) {
+  if (input.length === 0) {
     throw new RequestError("URL is required");
   }
 
-  return value;
+  // Fast path: skip trim when the string has no leading/trailing whitespace.
+  if (input.charCodeAt(0) > 32 && input.charCodeAt(input.length - 1) > 32) {
+    return input;
+  }
+
+  const trimmed = input.trim();
+  if (trimmed.length === 0) {
+    throw new RequestError("URL is required");
+  }
+
+  return trimmed;
 }
 
 function normalizeUrlForComparison(value: string): string | null {
@@ -1219,8 +1243,24 @@ function serializeBody(body?: BodyInit | null): Buffer | undefined {
 }
 
 function ensureMethod(method?: string): string {
-  const normalized = method?.trim().toUpperCase();
-  return normalized && normalized.length > 0 ? normalized : "GET";
+  if (method === undefined || method.length === 0) {
+    return "GET";
+  }
+
+  // Fast path: common methods already in canonical form (avoids trim + toUpperCase).
+  switch (method) {
+    case "GET":
+    case "POST":
+    case "PUT":
+    case "DELETE":
+    case "PATCH":
+    case "HEAD":
+    case "OPTIONS":
+      return method;
+  }
+
+  const normalized = method.trim().toUpperCase();
+  return normalized.length > 0 ? normalized : "GET";
 }
 
 function ensureBodyAllowed(method: string, body?: Buffer): void {
