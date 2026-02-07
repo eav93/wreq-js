@@ -22,7 +22,6 @@ import {
   
   // Classes
   Headers,
-  Request,
   Response,
   Transport,
 } from 'wreq-js';
@@ -63,7 +62,7 @@ wreq-js aims to be compatible with the standard Fetch API while adding browser i
 | Standard Fetch | wreq-js |
 | -------------- | ------- |
 | `fetch(url, init)` | ✅ Supported |
-| `Request` class | ✅ Supported |
+| `Request` class | ❌ Not supported (use `fetch(url, init)` directly) |
 | `Response` class | ✅ Supported |
 | `Headers` class | ✅ Supported |
 | `AbortController` | ✅ Supported |
