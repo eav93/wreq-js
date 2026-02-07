@@ -1,11 +1,11 @@
 ---
 title: Introduction
-description: "High-performance HTTP client for Node.js with real-browser TLS and HTTP/2 fingerprints, powered by Rust."
+description: "Node.js/TypeScript HTTP client with browser TLS fingerprint impersonation (JA3/JA4). Bypass Cloudflare, DataDome, and other anti-bot TLS fingerprinting. Rust-powered."
 ---
 
 # wreq-js
 
-A modern, actively maintained HTTP client that makes your scripts behave like real browsers on the network layer.
+Node.js/TypeScript HTTP client that bypasses Cloudflare, DataDome, Akamai, and other anti-bot TLS fingerprinting by impersonating real browser network behavior.
 
 <CardGroup cols={2}>
   <Card title="Native Performance" icon="bolt">
@@ -30,7 +30,7 @@ Standard HTTP clients like `axios`, `fetch`, `got`, and `curl` don't behave like
 - **HTTP/2 frames**: SETTINGS and PRIORITY behavior
 - **Header ordering**: the order headers are sent on the wire
 
-Some anti-bot and fraud systems use these signals to flag non-browser clients.
+Anti-bot systems like Cloudflare, DataDome, and Akamai use these signals to flag and block non-browser clients.
 
 `wreq-js` reproduces browser networking behavior using the [`wreq`](https://github.com/0x676e67/wreq) Rust engine underneath. Your job is to write scripts. wreq-js handles the network-level impersonation.
 
@@ -38,6 +38,7 @@ Some anti-bot and fraud systems use these signals to flag non-browser clients.
 
 <AccordionGroup>
   <Accordion title="✅ Great for" icon="check">
+    - Bypassing Cloudflare, DataDome, Akamai TLS fingerprinting
     - Web scraping and data collection
     - API automation with stealth requirements
     - High-throughput HTTP requests
