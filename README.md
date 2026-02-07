@@ -18,13 +18,13 @@ Node.js/TypeScript HTTP client with browser TLS fingerprint impersonation (JA3/J
 
 ## Alternatives comparison
 
-| Library | Approach | Maintained | API | Performance | Up-to-date fingerprints |
-|---------|----------|:----------:|-----|:-----------:|:-----------------------:|
-| **wreq-js** | Rust native bindings ([wreq](https://github.com/0x676e67/wreq)) | Yes | `fetch()`-compatible, TypeScript-first | Native Rust, no subprocess overhead | Yes, via [wreq-util](https://github.com/0x676e67/wreq-util) |
-| [CycleTLS](https://github.com/Danny-Dasilva/CycleTLS) | Go subprocess | Sporadic | Custom, callback-based | Go process per request | Stale |
-| [got-scraping](https://github.com/apify/got-scraping) | Pure JS header tweaking | Yes | `got`-based | JS-only, no real TLS spoofing | N/A (no TLS impersonation) |
+| Library | Approach | Maintained | API | Performance | Fingerprint profiles |
+|---------|----------|:----------:|-----|:-----------:|:--------------------:|
+| **wreq-js** | Rust native bindings ([wreq](https://github.com/0x676e67/wreq)) | Yes | `fetch()`-compatible, TypeScript-first | Native Rust, no subprocess overhead | Built-in, kept current via [wreq-util](https://github.com/0x676e67/wreq-util) |
+| [CycleTLS](https://github.com/Danny-Dasilva/CycleTLS) | Go subprocess | Sporadic | Promise-based | IPC overhead (Go subprocess) | BYO (manual JA3 strings) |
+| [got-scraping](https://github.com/apify/got-scraping) | Pure JS header tweaking | Yes | `got`-based | JS-only, no real TLS spoofing | N/A (header-level only) |
 | [node-tls-client](https://github.com/Sahil1337/node-tls-client) | Go shared lib (bogdanfinn) | Sporadic | Custom | FFI overhead | Depends on upstream |
-| [curl-impersonate](https://github.com/lwthiker/curl-impersonate) | Modified curl binary | Sporadic | CLI/bindings | Subprocess | Stale |
+| [curl-impersonate](https://github.com/lwthiker/curl-impersonate) | Modified curl binary | Inactive (last release Mar 2024) | CLI/bindings | Subprocess | Stale |
 
 ## Documentation
 
