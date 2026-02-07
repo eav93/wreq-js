@@ -103,4 +103,4 @@ This is a maintained fork of [will-work-for-meal/node-wreq](https://github.com/w
 
 - [wreq](https://github.com/0x676e67/wreq) - Rust HTTP client with browser impersonation
 - [wreq-util](https://github.com/0x676e67/wreq-util) - source of up-to-date browser profiles
-- [Neon](https://neon-bindings.com/) - Rust ↔ Node.js bindings
+- [NAPI-RS](https://napi.rs/) - Rust ↔ Node.js bindings

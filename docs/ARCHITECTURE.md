@@ -12,7 +12,7 @@
 │  - Validate inputs                   │
 │  - Convert to options object         │
 └──────────────┬───────────────────────┘
-               ↓ (Neon N-API)
+               ↓ (NAPI-RS)
 ┌──────────────────────────────────────┐
 │  Rust Native Module (lib.rs)         │
 │  - Parse JS objects                  │
@@ -55,4 +55,4 @@
 - [BoringSSL](https://boringssl.googlesource.com/boringssl/)
 - [JA3 Fingerprinting](https://github.com/salesforce/ja3)
 - [HTTP/2 RFC](https://httpwg.org/specs/rfc7540.html)
-- [Neon Bindings](https://neon-bindings.com/)
+- [NAPI-RS](https://napi.rs/)

@@ -90,27 +90,6 @@ await session.fetch('https://example.com/page2');
 await session.close();
 ```
 
-## Override session proxy
-
-Override the session's default proxy for specific requests:
-
-```typescript
-const session = await createSession({
-  browser: 'chrome_142',
-  proxy: 'http://default-proxy.example.com:8080',
-});
-
-// Uses default proxy
-await session.fetch('https://example.com');
-
-// Uses different proxy for this request only
-await session.fetch('https://example.com/special', {
-  proxy: 'http://special-proxy.example.com:8080',
-});
-
-await session.close();
-```
-
 ## Supported proxy types
 
 | Protocol | URL Format | Notes |

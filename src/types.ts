@@ -144,8 +144,7 @@ export interface RequestInit {
 
   /**
    * Request timeout in milliseconds. If the request takes longer than this value,
-   * it will be aborted.
-   * @default 30000
+   * it will be aborted. No timeout is applied by default.
    */
   timeout?: number;
 
@@ -376,8 +375,7 @@ export interface RequestOptions {
 
   /**
    * Request timeout in milliseconds. If the request takes longer than this value,
-   * it will be aborted.
-   * @default 30000
+   * it will be aborted. No timeout is applied by default.
    */
   timeout?: number;
 

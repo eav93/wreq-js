@@ -31,7 +31,7 @@ function websocket(options: WebSocketOptions): Promise<WebSocket>
   Additional headers for the WebSocket handshake.
 </ParamField>
 
-<ParamField path="onMessage" type="(data: string | Uint8Array) => void">
+<ParamField path="onMessage" type="(data: string | Buffer) => void">
   Callback for incoming messages.
 </ParamField>
 
@@ -39,7 +39,7 @@ function websocket(options: WebSocketOptions): Promise<WebSocket>
   Callback when the connection closes.
 </ParamField>
 
-<ParamField path="onError" type="(error: Error) => void">
+<ParamField path="onError" type="(error: string) => void">
   Callback for connection errors.
 </ParamField>
 
