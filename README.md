@@ -4,15 +4,27 @@
 [![CI](https://github.com/sqdshguy/wreq-js/actions/workflows/test.yml/badge.svg)](https://github.com/sqdshguy/wreq-js/actions/workflows/test.yml)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/sqdshguy/wreq-js)
 
-High-performance HTTP client for Node.js with real-browser TLS and HTTP/2 fingerprints, powered by Rust.
+Node.js/TypeScript HTTP client with browser TLS fingerprint impersonation (JA3/JA4). Bypass Cloudflare, DataDome, and other anti-bot TLS fingerprinting. Rust-powered via [wreq](https://github.com/0x676e67/wreq).
 
-- Native performance (no browser/process spawning)
+- **Bypass anti-bot TLS detection** (Cloudflare, DataDome, Akamai, etc.)
+- Native Rust performance (no browser/process spawning)
 - Real browser TLS fingerprints (JA3/JA4)
 - HTTP/2 impersonation (SETTINGS/PRIORITY/header ordering)
 - Multiple browser profiles (Chrome/Firefox/Safari/Edge/Opera/OkHttp)
+- `fetch()`-compatible API with sessions, cookies, and proxies
 - WebSocket support with fingerprint consistency
 - Prebuilt native binaries for macOS/Linux/Windows
-- TypeScript-ready with generated definitions
+- TypeScript-first with generated definitions
+
+## Alternatives comparison
+
+| Library | Approach | Language | Browser profiles |
+|---------|----------|----------|-----------------|
+| **wreq-js** | Rust native bindings ([wreq](https://github.com/0x676e67/wreq)) | TypeScript/Node.js | Chrome, Firefox, Safari, Edge, Opera, OkHttp |
+| [CycleTLS](https://github.com/Danny-Dasilva/CycleTLS) | Go subprocess | JavaScript | Chrome, Firefox |
+| [got-scraping](https://github.com/apify/got-scraping) | Pure JS header tweaking | JavaScript | Limited |
+| [node-tls-client](https://github.com/Sahil1337/node-tls-client) | Go shared lib (bogdanfinn) | JavaScript | Chrome, Firefox, Safari |
+| [curl-impersonate](https://github.com/lwthiker/curl-impersonate) | Modified curl binary | CLI/bindings | Chrome, Firefox |
 
 ## Documentation
 
@@ -75,7 +87,8 @@ More session patterns: https://wreq.sqdsh.win
 
 ## When to use
 
-Use `wreq-js` when you need `fetch()`-style ergonomics but want the network layer to look like a real browser.
+Use `wreq-js` when you need to make HTTP requests that pass Cloudflare, DataDome, or other anti-bot TLS fingerprinting checks without spinning up a real browser. It's a drop-in `fetch()` replacement that impersonates real browser TLS/HTTP2 fingerprints at the network level.
+
 If you need DOM/JS execution, CAPTCHA solving, or full browser automation, use Playwright/Puppeteer instead.
 
 ## Contributing
