@@ -1606,7 +1606,7 @@ export async function request(options: RequestOptions): Promise<Response> {
  * import { getProfiles } from 'wreq-js';
  *
  * const profiles = getProfiles();
- * console.log(profiles); // ['chrome_120', 'chrome_131', 'firefox', ...]
+ * console.log(profiles); // ['chrome_131', 'chrome_142', 'firefox_135', 'safari_18', ...]
  * ```
  */
 export function getProfiles(): BrowserProfile[] {

@@ -81,14 +81,17 @@ interface RequestInit {
   headers?: HeadersInit;
   body?: BodyInit | null;
   signal?: AbortSignal | null;
-  redirect?: 'follow';
-  
+  redirect?: 'follow' | 'manual' | 'error';
+
   // wreq-js extensions
   transport?: Transport;         // Reusable transport (pool/proxy/browser/os)
   browser?: BrowserProfile;      // Browser fingerprint profile
   os?: EmulationOS;              // Operating system emulation
   proxy?: string;                // Proxy URL
   timeout?: number;              // Request timeout in ms
+  session?: Session;             // Bind to an existing session
+  sessionId?: string;            // Bind to a session by ID
+  cookieMode?: 'session' | 'ephemeral'; // Cookie scoping strategy
   disableDefaultHeaders?: boolean; // Disable auto-added headers
   insecure?: boolean;            // Accept invalid certificates
 }
