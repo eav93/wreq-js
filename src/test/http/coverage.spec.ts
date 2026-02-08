@@ -96,6 +96,15 @@ describe("Request helpers", () => {
 
     const postResponse = await post(httpUrl("/get"), "payload", { browser: "chrome_142", timeout: 10_000 });
     assert.strictEqual(postResponse.status, 200);
+
+    const legacySessionResponse = await request({
+      url: httpUrl("/get"),
+      browser: "chrome_142",
+      sessionId: "legacy-session",
+      cookieMode: "session",
+      timeout: 10_000,
+    } as never);
+    assert.strictEqual(legacySessionResponse.status, 200);
   });
 
   test("accepts array, iterable, and object headers", async () => {
@@ -144,6 +153,17 @@ describe("Request helpers", () => {
       const inheritedHeader = Object.entries(objectBody.headers).find(([name]) => name.toLowerCase() === "x-inherited");
       assert.strictEqual(ownHeader?.[1], "ok");
       assert.strictEqual(inheritedHeader, undefined);
+
+      const trimmedResponse = await wreqFetch(httpUrl("/headers"), {
+        browser: "chrome_142",
+        timeout: 10_000,
+        disableDefaultHeaders: true,
+        headers: {
+          "  X-Trimmed  ": "yes",
+        },
+      });
+      const trimmedBody = await trimmedResponse.json<{ headers: Record<string, string> }>();
+      assert.strictEqual(trimmedBody.headers["X-Trimmed"], "yes");
     } finally {
       delete (Object.prototype as { [key: string]: unknown })["X-Inherited"];
     }
@@ -166,6 +186,7 @@ describe("Request validation", () => {
       new URLSearchParams({ mode: "form" }),
       new ArrayBuffer(8),
       new Uint8Array([1, 2, 3]),
+      new Blob(["charlie"], { type: "text/plain" }),
     ];
 
     for (const body of payloads) {
@@ -177,6 +198,28 @@ describe("Request validation", () => {
       });
       assert.strictEqual(response.status, 200);
     }
+
+    const formData = new FormData();
+    formData.set("alpha", "one");
+    const formResponse = await wreqFetch(httpUrl("/headers"), {
+      method: "POST",
+      browser: "chrome_142",
+      timeout: 10_000,
+      disableDefaultHeaders: true,
+      body: formData,
+    });
+    const formBody = await formResponse.json<{ headers: Record<string, string> }>();
+    assert.ok(formBody.headers["Content-Type"]?.startsWith("multipart/form-data;"));
+
+    const blobResponse = await wreqFetch(httpUrl("/headers"), {
+      method: "POST",
+      browser: "chrome_142",
+      timeout: 10_000,
+      disableDefaultHeaders: true,
+      body: new Blob(["delta"], { type: "text/plain" }),
+    });
+    const blobBody = await blobResponse.json<{ headers: Record<string, string> }>();
+    assert.strictEqual(blobBody.headers["Content-Type"], "text/plain");
   });
 
   test("rejects invalid inputs", async () => {
@@ -223,6 +266,11 @@ describe("Request validation", () => {
     await assert.rejects(
       wreqFetch(httpUrl("/get"), { browser: "chrome_142", method: "POST", body: { nope: true } as never }),
       (error: unknown) => error instanceof TypeError && /Unsupported body type/.test(error.message),
+    );
+
+    await assert.rejects(
+      wreqFetch(httpUrl("/get"), { browser: "chrome_142", headers: { "": "nope" } as never }),
+      (error: unknown) => error instanceof TypeError && /Header name must not be empty/.test(error.message),
     );
   });
 });

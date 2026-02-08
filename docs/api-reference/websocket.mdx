@@ -35,8 +35,8 @@ function websocket(options: WebSocketOptions): Promise<WebSocket>
   Callback for incoming messages.
 </ParamField>
 
-<ParamField path="onClose" type="() => void">
-  Callback when the connection closes.
+<ParamField path="onClose" type="(event: { code: number; reason: string }) => void">
+  Callback when the connection closes. Includes close code and reason when available.
 </ParamField>
 
 <ParamField path="onError" type="(error: string) => void">
@@ -54,6 +54,7 @@ Send a message to the server.
 ```typescript
 await ws.send('Hello, server!');
 await ws.send(JSON.stringify({ type: 'ping' }));
+await ws.send(new Uint8Array([1, 2, 3]));
 ```
 
 ### ws.close()
@@ -101,11 +102,11 @@ const ws = await websocket({
       console.log('Binary message:', data.byteLength, 'bytes');
     }
   },
-  onClose: () => {
-    console.log('Connection closed');
+  onClose: (event) => {
+    console.log('Connection closed:', event.code, event.reason);
   },
   onError: (error) => {
-    console.error('WebSocket error:', error.message);
+    console.error('WebSocket error:', error);
   },
 });
 ```

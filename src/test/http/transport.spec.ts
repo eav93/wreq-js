@@ -1,4 +1,6 @@
 import assert from "node:assert";
+import { createServer, request as httpRequest } from "node:http";
+import type { AddressInfo } from "node:net";
 import { describe, test } from "node:test";
 import { createSession, createTransport, RequestError, fetch as wreqFetch } from "../../wreq-js.js";
 import { httpUrl } from "../helpers/http.js";
@@ -25,6 +27,88 @@ describe("Transport API", () => {
       assert.strictEqual(response.status, 200);
     } finally {
       await transport.close();
+    }
+  });
+
+  test("routes requests through a real HTTP proxy", async () => {
+    const proxiedRequests: string[] = [];
+    const proxyServer = createServer((req, res) => {
+      proxiedRequests.push(req.url ?? "");
+
+      let target: URL;
+      try {
+        if (req.url && /^https?:\/\//i.test(req.url)) {
+          target = new URL(req.url);
+        } else {
+          const host = req.headers.host;
+          if (!host) {
+            res.statusCode = 400;
+            res.end("Missing Host header");
+            return;
+          }
+          target = new URL(req.url ?? "/", `http://${host}`);
+        }
+      } catch (error) {
+        res.statusCode = 400;
+        res.end(String(error));
+        return;
+      }
+
+      const upstream = httpRequest(
+        target,
+        {
+          method: req.method,
+          headers: req.headers,
+        },
+        (upstreamRes) => {
+          res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
+          upstreamRes.pipe(res);
+        },
+      );
+
+      upstream.on("error", (error) => {
+        if (!res.headersSent) {
+          res.statusCode = 502;
+        }
+        res.end(String(error));
+      });
+
+      req.pipe(upstream);
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      proxyServer.once("error", reject);
+      proxyServer.listen(0, "127.0.0.1", () => {
+        proxyServer.off("error", reject);
+        resolve();
+      });
+    });
+
+    const address = proxyServer.address() as AddressInfo | null;
+    if (!address) {
+      await new Promise<void>((resolve, reject) => proxyServer.close((error) => (error ? reject(error) : resolve())));
+      throw new Error("Failed to determine proxy server address");
+    }
+
+    const transport = await createTransport({
+      browser: "chrome_142",
+      proxy: `http://127.0.0.1:${address.port}`,
+    });
+
+    try {
+      const response = await wreqFetch(httpUrl("/get"), {
+        transport,
+        timeout: 10_000,
+      });
+
+      assert.strictEqual(response.status, 200);
+      assert.ok(
+        proxiedRequests.some((url) => url.includes("/get")),
+        "Proxy should observe proxied request URL",
+      );
+    } finally {
+      await transport.close();
+      await new Promise<void>((resolve, reject) => proxyServer.close((error) => (error ? reject(error) : resolve())));
     }
   });
 

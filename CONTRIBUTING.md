@@ -24,6 +24,10 @@
    ```bash
    npm test
    ```
+   `npm test` assumes the native addon is already built. If you changed Rust code (or need a fresh addon), run:
+   ```bash
+   npm run test:build
+   ```
 
 ## 🔧 Making Changes
 
@@ -103,8 +107,11 @@ test('test1', () => {
 ### Running Tests
 
 ```bash
-# Run all tests
+# Run all tests (without rebuilding native addon)
 npm test
+
+# Build native addon + run all tests
+npm run test:build
 
 # Run specific test file
 npm test -- path/to/test.spec.ts

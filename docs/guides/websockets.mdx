@@ -34,8 +34,8 @@ const ws = await websocket({
   onMessage: (data) => {
     console.log('Message:', data);
   },
-  onClose: () => {
-    console.log('Connection closed');
+  onClose: (event) => {
+    console.log('Connection closed:', event.code, event.reason);
   },
   onError: (error) => {
     console.error('Error:', error);

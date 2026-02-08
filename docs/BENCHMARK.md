@@ -2,6 +2,8 @@
 
 This repo includes a local benchmark runner that starts a local HTTP server and measures request throughput across multiple samples, reporting a 95% confidence interval so you can tell whether a change is above the noise floor.
 
+These results are intentionally scoped to local HTTP throughput. They do **not** measure TLS impersonation overhead, proxy tunneling behavior, WAN latency, or anti-bot challenge handling. Treat them as a microbenchmark for request-path regressions, not production end-to-end latency.
+
 ## Run
 
 Build + run:

@@ -5,10 +5,9 @@ mod websocket;
 use anyhow::anyhow;
 use client::{
     HTTP_RUNTIME, RedirectMode, RequestOptions, Response, clear_managed_session,
-    create_managed_session, create_managed_transport, drop_body_stream,
-    drop_managed_session, drop_managed_transport, generate_session_id,
-    make_request, read_body_chunk as native_read_body_chunk,
-    read_body_all as native_read_body_all,
+    create_managed_session, create_managed_transport, drop_body_stream, drop_managed_session,
+    drop_managed_transport, generate_session_id, make_request,
+    read_body_all as native_read_body_all, read_body_chunk as native_read_body_chunk,
 };
 use dashmap::DashMap;
 use futures_util::StreamExt;
@@ -18,8 +17,8 @@ use neon::types::{
     buffer::TypedArray,
 };
 use std::collections::HashMap;
-use std::sync::LazyLock;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use tokio::sync::{Semaphore, mpsc};
 use tokio_util::sync::CancellationToken;
 use websocket::{
@@ -29,7 +28,8 @@ use wreq::ws::message::Message;
 use wreq_util::{Emulation, EmulationOS};
 
 const WS_EVENT_BUFFER: usize = 64;
-static REQUEST_CANCELLATIONS: LazyLock<DashMap<u64, CancellationToken>> = LazyLock::new(DashMap::new);
+static REQUEST_CANCELLATIONS: LazyLock<DashMap<u64, CancellationToken>> =
+    LazyLock::new(DashMap::new);
 
 // Parse browser string to Emulation enum using serde
 fn parse_emulation(browser: &str) -> Emulation {
@@ -56,9 +56,11 @@ fn parse_emulation_os(os: &str) -> EmulationOS {
         generated_profiles::OPERATING_SYSTEMS
             .iter()
             .filter_map(|label| {
-                serde_json::from_value::<EmulationOS>(serde_json::Value::String((*label).to_string()))
-                    .ok()
-                    .map(|emulation_os| (*label, emulation_os))
+                serde_json::from_value::<EmulationOS>(serde_json::Value::String(
+                    (*label).to_string(),
+                ))
+                .ok()
+                .map(|emulation_os| (*label, emulation_os))
             })
             .collect()
     });
@@ -774,8 +776,14 @@ fn websocket_connect(mut cx: FunctionContext) -> JsResult<JsPromise> {
                                 break;
                             }
                         }
-                        Ok(Message::Close(_)) => {
-                            let _ = receiver_tx.send(WsEvent::Close).await;
+                        Ok(Message::Close(close_frame)) => {
+                            let close_event = close_frame
+                                .map(|frame| WsCloseEvent {
+                                    code: u16::from(frame.code),
+                                    reason: frame.reason.to_string(),
+                                })
+                                .unwrap_or_else(default_ws_close_event);
+                            let _ = receiver_tx.send(WsEvent::Close(close_event)).await;
                             break;
                         }
                         Ok(_) => {
@@ -783,13 +791,17 @@ fn websocket_connect(mut cx: FunctionContext) -> JsResult<JsPromise> {
                         }
                         Err(e) => {
                             let _ = receiver_tx.send(WsEvent::Error(format!("{:#}", e))).await;
-                            let _ = receiver_tx.send(WsEvent::Close).await;
+                            let _ = receiver_tx
+                                .send(WsEvent::Close(default_ws_close_event()))
+                                .await;
                             break;
                         }
                     }
                 }
 
-                let _ = receiver_tx.send(WsEvent::Close).await;
+                let _ = receiver_tx
+                    .send(WsEvent::Close(default_ws_close_event()))
+                    .await;
             });
 
             drop(events_tx);
@@ -848,14 +860,19 @@ fn websocket_connect(mut cx: FunctionContext) -> JsResult<JsPromise> {
                                 });
                             }
                         }
-                        WsEvent::Close => {
+                        WsEvent::Close(close_event) => {
                             if !close_emitted {
                                 if let Some(on_close_ref) = on_close_clone.as_ref() {
                                     let on_close_ref = on_close_ref.clone();
                                     channel_clone.send(move |mut cx| {
                                         let cb = on_close_ref.to_inner(&mut cx);
                                         let this = cx.undefined();
-                                        cb.call(&mut cx, this, vec![])?;
+                                        let event = cx.empty_object();
+                                        let code = cx.number(close_event.code as f64);
+                                        let reason = cx.string(close_event.reason);
+                                        event.set(&mut cx, "code", code)?;
+                                        event.set(&mut cx, "reason", reason)?;
+                                        cb.call(&mut cx, this, vec![event.upcast()])?;
                                         Ok(())
                                     });
                                 }
@@ -870,7 +887,12 @@ fn websocket_connect(mut cx: FunctionContext) -> JsResult<JsPromise> {
                     channel_clone.send(move |mut cx| {
                         let cb = on_close_ref.to_inner(&mut cx);
                         let this = cx.undefined();
-                        cb.call(&mut cx, this, vec![])?;
+                        let event = cx.empty_object();
+                        let code = cx.number(1005f64);
+                        let reason = cx.string("");
+                        event.set(&mut cx, "code", code)?;
+                        event.set(&mut cx, "reason", reason)?;
+                        cb.call(&mut cx, this, vec![event.upcast()])?;
                         Ok(())
                     });
                 }
@@ -955,8 +977,22 @@ enum SendData {
 enum WsEvent {
     Text(String),
     Binary(Vec<u8>),
-    Close,
+    Close(WsCloseEvent),
     Error(String),
+}
+
+#[derive(Clone)]
+struct WsCloseEvent {
+    code: u16,
+    reason: String,
+}
+
+fn default_ws_close_event() -> WsCloseEvent {
+    // RFC 6455 reserved "no status received" code used when no close frame payload exists.
+    WsCloseEvent {
+        code: 1005,
+        reason: String::new(),
+    }
 }
 
 // WebSocket close function

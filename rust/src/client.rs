@@ -12,8 +12,8 @@ use std::time::Duration;
 use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
 use uuid::Uuid;
-use wreq::{Client as HttpClient, Method, Proxy, redirect};
 use wreq::cookie::Jar;
+use wreq::{Client as HttpClient, Method, Proxy, redirect};
 use wreq_util::{Emulation, EmulationOS, EmulationOption};
 
 pub static HTTP_RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
@@ -24,7 +24,8 @@ pub static HTTP_RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
 });
 
 static SESSION_MANAGER: LazyLock<SessionManager> = LazyLock::new(SessionManager::new);
-static EPHEMERAL_MANAGER: LazyLock<EphemeralClientManager> = LazyLock::new(EphemeralClientManager::new);
+static EPHEMERAL_MANAGER: LazyLock<EphemeralClientManager> =
+    LazyLock::new(EphemeralClientManager::new);
 static TRANSPORT_MANAGER: LazyLock<TransportManager> = LazyLock::new(TransportManager::new);
 
 // Responses at or below this size (bytes) are fully buffered in Rust and returned
@@ -93,6 +94,8 @@ struct SessionConfig {
     emulation_os: EmulationOS,
     proxy: Option<Arc<str>>,
     insecure: bool,
+    connect_timeout: Option<Duration>,
+    read_timeout: Option<Duration>,
 }
 
 impl SessionConfig {
@@ -103,6 +106,8 @@ impl SessionConfig {
             emulation_os: options.emulation_os,
             proxy: options.proxy.clone(),
             insecure: options.insecure,
+            connect_timeout: options.connect_timeout.map(Duration::from_millis),
+            read_timeout: options.read_timeout.map(Duration::from_millis),
         }
     }
 }
@@ -186,7 +191,11 @@ struct EphemeralClientManager {
 
 pub type ResponseBodyStream = Pin<Box<dyn Stream<Item = wreq::Result<Bytes>> + Send>>;
 
-static BODY_STREAMS: LazyLock<DashMap<u64, Arc<Mutex<ResponseBodyStream>>>> = LazyLock::new(DashMap::new);
+static BODY_STREAMS: LazyLock<Cache<u64, Arc<Mutex<ResponseBodyStream>>>> = LazyLock::new(|| {
+    Cache::builder()
+        .time_to_idle(Duration::from_secs(300))
+        .build()
+});
 static NEXT_BODY_HANDLE: AtomicU64 = AtomicU64::new(1);
 
 fn next_body_handle() -> u64 {
@@ -202,7 +211,6 @@ pub fn store_body_stream(stream: ResponseBodyStream) -> u64 {
 pub async fn read_body_chunk(handle: u64) -> Result<Option<Bytes>> {
     let stream = BODY_STREAMS
         .get(&handle)
-        .map(|entry| entry.value().clone())
         .ok_or_else(|| anyhow!("Body handle {} not found", handle))?;
 
     let mut guard = stream.lock().await;
@@ -211,11 +219,11 @@ pub async fn read_body_chunk(handle: u64) -> Result<Option<Bytes>> {
     match next {
         Some(Ok(bytes)) => Ok(Some(bytes)),
         Some(Err(err)) => {
-            BODY_STREAMS.remove(&handle);
+            BODY_STREAMS.invalidate(&handle);
             Err(err.into())
         }
         None => {
-            BODY_STREAMS.remove(&handle);
+            BODY_STREAMS.invalidate(&handle);
             Ok(None)
         }
     }
@@ -225,7 +233,6 @@ pub async fn read_body_chunk(handle: u64) -> Result<Option<Bytes>> {
 pub async fn read_body_all(handle: u64) -> Result<Bytes> {
     let stream = BODY_STREAMS
         .remove(&handle)
-        .map(|(_, v)| v)
         .ok_or_else(|| anyhow!("Body handle {} not found", handle))?;
 
     let mut guard = stream.lock().await;
@@ -255,7 +262,7 @@ pub async fn read_body_all(handle: u64) -> Result<Bytes> {
 }
 
 pub fn drop_body_stream(handle: u64) {
-    BODY_STREAMS.remove(&handle);
+    BODY_STREAMS.invalidate(&handle);
 }
 
 impl TransportManager {
@@ -377,7 +384,6 @@ async fn make_request_inner(
     client: Arc<HttpClient>,
     cookie_jar: Arc<Jar>,
 ) -> Result<Response> {
-
     let RequestOptions {
         url,
         headers,
@@ -465,7 +471,9 @@ async fn make_request_inner(
     let allows_body = response_allows_body(status, method.as_ref());
 
     let (body_handle, body_bytes) = if allows_body {
-        let inline_eligible = content_length.map(|len| len <= INLINE_BODY_MAX).unwrap_or(false);
+        let inline_eligible = content_length
+            .map(|len| len <= INLINE_BODY_MAX)
+            .unwrap_or(false);
 
         if inline_eligible {
             let bytes = response.bytes().await?;
@@ -553,6 +561,14 @@ fn build_ephemeral_client(config: &SessionConfig) -> Result<HttpClient> {
         client_builder = client_builder.cert_verification(false);
     }
 
+    if let Some(connect_timeout) = config.connect_timeout {
+        client_builder = client_builder.connect_timeout(connect_timeout);
+    }
+
+    if let Some(read_timeout) = config.read_timeout {
+        client_builder = client_builder.read_timeout(read_timeout);
+    }
+
     client_builder
         .build()
         .context("Failed to build HTTP client")
@@ -612,4 +628,52 @@ pub fn drop_managed_transport(transport_id: &str) {
 
 pub fn generate_session_id() -> String {
     Uuid::new_v4().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn base_request_options() -> RequestOptions {
+        RequestOptions {
+            url: "http://127.0.0.1".to_string(),
+            emulation: Emulation::Chrome142,
+            emulation_os: EmulationOS::MacOS,
+            headers: Vec::new(),
+            method: "GET".to_string(),
+            body: None,
+            proxy: None,
+            timeout: 5_000,
+            redirect: RedirectMode::Follow,
+            session_id: "test-session".to_string(),
+            ephemeral: true,
+            disable_default_headers: false,
+            insecure: false,
+            transport_id: None,
+            pool_idle_timeout: None,
+            pool_max_idle_per_host: None,
+            pool_max_size: None,
+            connect_timeout: None,
+            read_timeout: None,
+        }
+    }
+
+    #[test]
+    fn ephemeral_session_cache_key_includes_socket_timeouts() {
+        let base = base_request_options();
+
+        let mut with_connect_timeout = base_request_options();
+        with_connect_timeout.connect_timeout = Some(250);
+
+        let mut with_read_timeout = base_request_options();
+        with_read_timeout.read_timeout = Some(250);
+
+        let base_config = SessionConfig::from_request(&base);
+        let connect_config = SessionConfig::from_request(&with_connect_timeout);
+        let read_config = SessionConfig::from_request(&with_read_timeout);
+
+        assert_ne!(base_config, connect_config);
+        assert_ne!(base_config, read_config);
+        assert_ne!(connect_config, read_config);
+    }
 }

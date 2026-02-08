@@ -17,6 +17,7 @@ describe("WebSocket", () => {
   test("should connect to WebSocket and send/receive messages", async () => {
     const messages: (string | Buffer)[] = [];
     let isClosed = false;
+    let closeEvent: { code: number; reason: string } | undefined;
 
     const ws = await websocket({
       url: WS_TEST_URL,
@@ -24,8 +25,9 @@ describe("WebSocket", () => {
       onMessage: (data: string | Buffer) => {
         messages.push(data);
       },
-      onClose: () => {
+      onClose: (event) => {
         isClosed = true;
+        closeEvent = event;
       },
       onError: (error: string) => {
         console.error("WebSocket error:", error);
@@ -44,6 +46,9 @@ describe("WebSocket", () => {
     await ws.close();
     await sleep(100);
     assert.ok(isClosed, "Should receive close event");
+    assert.ok(closeEvent, "Should receive close metadata");
+    assert.strictEqual(typeof closeEvent?.code, "number");
+    assert.strictEqual(typeof closeEvent?.reason, "string");
   });
 
   test("should handle parallel sends on same WebSocket", async () => {
@@ -90,6 +95,38 @@ describe("WebSocket", () => {
       );
     }
     console.log("All messages received correctly:", receivedStrings.join(", "));
+
+    await ws.close();
+  });
+
+  test("should send binary data from Uint8Array and ArrayBuffer", async () => {
+    const messages: (string | Buffer)[] = [];
+
+    const ws = await websocket({
+      url: WS_TEST_URL,
+      browser: "chrome_142",
+      onMessage: (data: string | Buffer) => {
+        messages.push(data);
+      },
+      onClose: () => {},
+      onError: () => {},
+    });
+
+    const bytes = new Uint8Array([1, 2, 3, 4, 5]);
+    await ws.send(bytes);
+    await ws.send(bytes.buffer.slice(0));
+
+    await sleep(200);
+
+    const binaryMessages = messages.filter((message): message is Buffer => Buffer.isBuffer(message));
+    assert.ok(
+      binaryMessages.some((payload) => payload.equals(Buffer.from(bytes))),
+      "Should echo Uint8Array payload",
+    );
+    assert.ok(
+      binaryMessages.some((payload) => payload.equals(Buffer.from(bytes.buffer))),
+      "Should echo ArrayBuffer payload",
+    );
 
     await ws.close();
   });
@@ -164,5 +201,31 @@ describe("WebSocket", () => {
       websocket({ url: "ws://127.0.0.1:1", browser: "chrome_142", onMessage: () => {} }),
       (error: unknown) => error instanceof RequestError,
     );
+  });
+
+  test("provides close code and reason from server close frames", async () => {
+    const closeUrl = new URL(WS_TEST_URL);
+    closeUrl.searchParams.set("closeCode", "4001");
+    closeUrl.searchParams.set("closeReason", "shutdown");
+
+    let closeEvent: { code: number; reason: string } | undefined;
+
+    await websocket({
+      url: closeUrl.toString(),
+      browser: "chrome_142",
+      onMessage: () => {},
+      onClose: (event) => {
+        closeEvent = event;
+      },
+      onError: () => {},
+    });
+
+    for (let i = 0; i < 20 && !closeEvent; i += 1) {
+      await sleep(25);
+    }
+
+    assert.ok(closeEvent, "Should receive close callback");
+    assert.strictEqual(closeEvent?.code, 4001);
+    assert.strictEqual(closeEvent?.reason, "shutdown");
   });
 });

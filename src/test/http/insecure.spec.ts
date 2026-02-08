@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
-import { createSession, fetch as wreqFetch } from "../../wreq-js.js";
+import { createSession, request, fetch as wreqFetch } from "../../wreq-js.js";
 
 // Local HTTPS test servers with certificate issues (provided by test runner)
 const SELF_SIGNED_URL = process.env.HTTPS_SELF_SIGNED_URL;
@@ -40,6 +40,17 @@ describe("Insecure certificate verification", () => {
       response.status >= 200 && response.status < 400,
       "Should accept self-signed certificate with insecure flag",
     );
+  });
+
+  test("request() helper forwards insecure option", async () => {
+    const response = await request({
+      url: `${SELF_SIGNED_URL}/json`,
+      browser: "chrome_142",
+      timeout: 10_000,
+      insecure: true,
+    });
+
+    assert.ok(response.status >= 200 && response.status < 400, "request() should honor insecure=true");
   });
 
   test("rejects expired certificates by default", async () => {

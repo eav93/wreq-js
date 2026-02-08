@@ -52,7 +52,7 @@ export type HeadersInit =
 
 /**
  * Represents the various types of data that can be used as a request body.
- * Supports string, binary data (ArrayBuffer, ArrayBufferView), URL-encoded parameters, and Node.js Buffer.
+ * Supports strings, binary payloads, URL-encoded parameters, multipart forms, and blobs.
  *
  * @example
  * ```typescript
@@ -64,9 +64,27 @@ export type HeadersInit =
  *
  * // Buffer
  * const body: BodyInit = Buffer.from('data');
+ *
+ * // FormData
+ * const body: BodyInit = new FormData();
  * ```
  */
-export type BodyInit = string | ArrayBuffer | ArrayBufferView | URLSearchParams | Buffer;
+export type BodyInit = string | ArrayBuffer | ArrayBufferView | URLSearchParams | Buffer | Blob | FormData;
+
+/**
+ * Details about why a WebSocket connection closed.
+ */
+export interface WebSocketCloseEvent {
+  /**
+   * WebSocket close status code (RFC 6455).
+   */
+  code: number;
+
+  /**
+   * UTF-8 close reason sent by the peer.
+   */
+  reason: string;
+}
 
 /**
  * Options for configuring a fetch request. Compatible with the standard Fetch API
@@ -477,8 +495,8 @@ export interface NativeResponse {
  *   onMessage: (data) => {
  *     console.log('Received:', data);
  *   },
- *   onClose: () => {
- *     console.log('Connection closed');
+ *   onClose: (event) => {
+ *     console.log('Connection closed:', event.code, event.reason);
  *   },
  *   onError: (error) => {
  *     console.error('WebSocket error:', error);
@@ -529,7 +547,7 @@ export interface WebSocketOptions {
    * Callback function invoked when the WebSocket connection is closed.
    * This is called for both clean closes and connection errors.
    */
-  onClose?: () => void;
+  onClose?: (event: WebSocketCloseEvent) => void;
 
   /**
    * Callback function invoked when a connection or protocol error occurs.

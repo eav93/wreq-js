@@ -423,7 +423,18 @@ export async function startLocalTestServer(): Promise<LocalTestServer> {
         socket.unshift(head);
       }
 
-      setupEchoWebSocket(socket);
+      const closeCodeRaw = url.searchParams.get("closeCode");
+      const closeReason = url.searchParams.get("closeReason") ?? "";
+      let serverClose: { code: number; reason: string } | undefined;
+
+      if (closeCodeRaw !== null) {
+        const parsedCode = Number(closeCodeRaw);
+        if (Number.isInteger(parsedCode) && parsedCode >= 1000 && parsedCode <= 4999) {
+          serverClose = { code: parsedCode, reason: closeReason };
+        }
+      }
+
+      setupEchoWebSocket(socket, serverClose);
     } catch (error) {
       console.error("Local test server WebSocket upgrade error:", error);
       socket.destroy();
@@ -431,7 +442,7 @@ export async function startLocalTestServer(): Promise<LocalTestServer> {
   }
 }
 
-function setupEchoWebSocket(socket: Socket) {
+function setupEchoWebSocket(socket: Socket, serverClose?: { code: number; reason: string }) {
   let buffer = Buffer.alloc(0);
   let closed = false;
 
@@ -447,6 +458,17 @@ function setupEchoWebSocket(socket: Socket) {
   socket.on("error", () => {
     socket.destroy();
   });
+
+  if (serverClose) {
+    const reasonBytes = Buffer.from(serverClose.reason, "utf8");
+    const payload = Buffer.alloc(2 + reasonBytes.length);
+    payload.writeUInt16BE(serverClose.code, 0);
+    reasonBytes.copy(payload, 2);
+    sendFrame(0x8, payload);
+    closed = true;
+    socket.end();
+    return;
+  }
 
   function parseFrames() {
     while (buffer.length >= 2) {

@@ -15,6 +15,7 @@ import type {
   NativeWebSocketConnection,
   RequestOptions,
   SessionHandle,
+  WebSocketCloseEvent,
   WebSocketOptions,
   RequestInit as WreqRequestInit,
 } from "./types.js";
@@ -27,7 +28,7 @@ interface NativeWebSocketOptions {
   headers: Record<string, string> | HeaderTuple[];
   proxy?: string;
   onMessage: (data: string | Buffer) => void;
-  onClose?: () => void;
+  onClose?: (event: WebSocketCloseEvent) => void;
   onError?: (error: string) => void;
 }
 
@@ -443,20 +444,7 @@ function headersToTuples(init: HeadersInit): HeaderTuple[] {
   const out: HeaderTuple[] = [];
 
   if (isPlainObject(init)) {
-    for (const name in init) {
-      if (!Object.hasOwn(init, name)) {
-        continue;
-      }
-
-      const value = init[name];
-      if (value === undefined || value === null) {
-        continue;
-      }
-
-      out.push([name, String(value)]);
-    }
-
-    return out;
+    return new Headers(init).toTuples();
   }
 
   if (isIterable<HeaderTuple>(init)) {
@@ -472,6 +460,21 @@ function headersToTuples(init: HeadersInit): HeaderTuple[] {
   }
 
   return out;
+}
+
+function hasHeaderName(tuples: HeaderTuple[] | undefined, name: string): boolean {
+  if (!tuples) {
+    return false;
+  }
+
+  const target = name.toLowerCase();
+  for (const [headerName] of tuples) {
+    if (headerName.toLowerCase() === target) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function mergeHeaderTuples(
@@ -1214,32 +1217,54 @@ function validateRedirectMode(mode?: WreqRequestInit["redirect"]): void {
   throw new RequestError(`Redirect mode '${mode}' is not supported`);
 }
 
-function serializeBody(body?: BodyInit | null): Buffer | undefined {
+type SerializedBody = {
+  body?: Buffer;
+  contentType?: string;
+};
+
+async function serializeBody(body?: BodyInit | null): Promise<SerializedBody> {
   if (body === null || body === undefined) {
-    return undefined;
+    return {};
   }
 
   if (typeof body === "string") {
-    return Buffer.from(body, "utf8");
+    return { body: Buffer.from(body, "utf8") };
   }
 
   if (Buffer.isBuffer(body)) {
-    return body;
+    return { body };
   }
 
   if (body instanceof URLSearchParams) {
-    return Buffer.from(body.toString(), "utf8");
+    return {
+      body: Buffer.from(body.toString(), "utf8"),
+      contentType: "application/x-www-form-urlencoded;charset=UTF-8",
+    };
   }
 
   if (body instanceof ArrayBuffer) {
-    return Buffer.from(body);
+    return { body: Buffer.from(body) };
   }
 
   if (ArrayBuffer.isView(body)) {
-    return Buffer.from(body.buffer, body.byteOffset, body.byteLength);
+    return { body: Buffer.from(body.buffer, body.byteOffset, body.byteLength) };
   }
 
-  throw new TypeError("Unsupported body type; expected string, Buffer, ArrayBuffer, or URLSearchParams");
+  if (typeof Blob !== "undefined" && body instanceof Blob) {
+    const buffer = Buffer.from(await body.arrayBuffer());
+    return { body: buffer, ...(body.type ? { contentType: body.type } : {}) };
+  }
+
+  if (typeof FormData !== "undefined" && body instanceof FormData) {
+    const encoded = new globalThis.Response(body);
+    const contentType = encoded.headers.get("content-type") ?? undefined;
+    const buffer = Buffer.from(await encoded.arrayBuffer());
+    return { body: buffer, ...(contentType ? { contentType } : {}) };
+  }
+
+  throw new TypeError(
+    "Unsupported body type; expected string, Buffer, ArrayBuffer, ArrayBufferView, URLSearchParams, Blob, or FormData",
+  );
 }
 
 function ensureMethod(method?: string): string {
@@ -1439,13 +1464,20 @@ export async function fetch(input: string | URL, init?: WreqRequestInit): Promis
   }
 
   const method = ensureMethod(config.method);
-  const body = serializeBody(config.body ?? null);
+  const serializedBody = await serializeBody(config.body ?? null);
+  const body = serializedBody.body;
 
   ensureBodyAllowed(method, body);
 
   // Only normalize headers when provided; avoids per-request header allocations on hot paths.
   // If the caller already provides HeaderTuple[], pass it through.
-  const headerTuples = mergeHeaderTuples(sessionDefaults?.defaultHeaders, config.headers);
+  let headerTuples = mergeHeaderTuples(sessionDefaults?.defaultHeaders, config.headers);
+  if (serializedBody.contentType && !hasHeaderName(headerTuples, "content-type")) {
+    if (!headerTuples) {
+      headerTuples = [];
+    }
+    headerTuples.push(["Content-Type", serializedBody.contentType]);
+  }
 
   const transport = resolveTransportContext(config, sessionDefaults);
   const timeout = config.timeout ?? sessionDefaults?.timeout;
@@ -1595,6 +1627,7 @@ export async function request(options: RequestOptions): Promise<Response> {
 
   const { url, ...rest } = options;
   const init: WreqRequestInit = {};
+  const legacy = rest as Partial<WreqRequestInit> & { ephemeral?: boolean };
 
   if (rest.method !== undefined) {
     init.method = rest.method;
@@ -1632,12 +1665,30 @@ export async function request(options: RequestOptions): Promise<Response> {
     init.transport = rest.transport;
   }
 
+  if (rest.insecure !== undefined) {
+    init.insecure = rest.insecure;
+  }
+
   if (rest.disableDefaultHeaders !== undefined) {
     init.disableDefaultHeaders = rest.disableDefaultHeaders;
   }
 
   if (rest.redirect !== undefined) {
     init.redirect = rest.redirect;
+  }
+
+  if (legacy.signal !== undefined) {
+    init.signal = legacy.signal;
+  }
+
+  if (legacy.session !== undefined) {
+    init.session = legacy.session;
+  }
+
+  if (legacy.cookieMode !== undefined) {
+    init.cookieMode = legacy.cookieMode;
+  } else if (legacy.ephemeral === true) {
+    init.cookieMode = "ephemeral";
   }
 
   return fetch(url, init);
@@ -1739,8 +1790,8 @@ export async function post(
  *   onMessage: (data) => {
  *     console.log('Received:', data);
  *   },
- *   onClose: () => {
- *     console.log('Connection closed');
+ *   onClose: (event) => {
+ *     console.log('Connection closed:', event.code, event.reason);
  *   },
  *   onError: (error) => {
  *     console.error('Error:', error);
@@ -1761,6 +1812,7 @@ export class WebSocket {
   private _connection: NativeWebSocketConnection;
   private _finalizerToken: NativeWebSocketConnection | undefined;
   private _closed = false;
+  private _closing: Promise<void> | undefined;
 
   constructor(connection: NativeWebSocketConnection) {
     this._connection = connection;
@@ -1774,9 +1826,22 @@ export class WebSocket {
   /**
    * Send a message (text or binary)
    */
-  async send(data: string | Buffer): Promise<void> {
+  async send(data: string | Buffer | ArrayBuffer | ArrayBufferView): Promise<void> {
+    const payload =
+      typeof data === "string"
+        ? data
+        : Buffer.isBuffer(data)
+          ? data
+          : data instanceof ArrayBuffer
+            ? Buffer.from(data)
+            : ArrayBuffer.isView(data)
+              ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
+              : (() => {
+                  throw new TypeError("WebSocket data must be a string, Buffer, ArrayBuffer, or ArrayBufferView");
+                })();
+
     try {
-      await nativeBinding.websocketSend(this._connection, data);
+      await nativeBinding.websocketSend(this._connection, payload);
     } catch (error) {
       throw new RequestError(String(error));
     }
@@ -1790,18 +1855,27 @@ export class WebSocket {
       return;
     }
 
-    this._closed = true;
-
-    if (this._finalizerToken && websocketFinalizer) {
-      websocketFinalizer.unregister(this._finalizerToken);
-      this._finalizerToken = undefined;
+    if (this._closing) {
+      return this._closing;
     }
 
-    try {
-      await nativeBinding.websocketClose(this._connection);
-    } catch (error) {
-      throw new RequestError(String(error));
-    }
+    this._closing = (async () => {
+      try {
+        await nativeBinding.websocketClose(this._connection);
+        this._closed = true;
+
+        if (this._finalizerToken && websocketFinalizer) {
+          websocketFinalizer.unregister(this._finalizerToken);
+          this._finalizerToken = undefined;
+        }
+      } catch (error) {
+        throw new RequestError(String(error));
+      } finally {
+        this._closing = undefined;
+      }
+    })();
+
+    return this._closing;
   }
 }
 
