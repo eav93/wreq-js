@@ -75,10 +75,11 @@ If you do not want to benchmark on your laptop/network, use the AWS CLI harness:
 2. Run base vs head comparison on an ephemeral EC2 runner (Spot by default, auto-terminates):
 
 ```bash
-./scripts/aws-perf/ec2-compare.sh --region us-east-1
+./scripts/aws-perf/ec2-compare.sh
 ```
 
 Note: the runner clones from `origin` by default, so both refs must exist in the remote repository (push your branch/commit first if needed).
+Default region is `us-west-2`; pass `--region <aws-region>` to override.
 
 The script:
 
@@ -97,7 +98,7 @@ Useful options:
 Safety cleanup:
 
 ```bash
-./scripts/aws-perf/cleanup-stale.sh us-east-1
+./scripts/aws-perf/cleanup-stale.sh
 ```
 
 This terminates old perf instances tagged with expired TTL metadata.

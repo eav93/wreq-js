@@ -9,7 +9,8 @@ INSTANCE_ID=""
 SHOULD_CLEANUP=true
 PARAMS_FILE=""
 
-REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
+DEFAULT_REGION="us-west-2"
+REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-$DEFAULT_REGION}}"
 INSTANCE_PROFILE_NAME="wreq-js-perf-ssm-profile"
 INSTANCE_TYPE="c6i.large"
 USE_SPOT=true
@@ -33,7 +34,7 @@ usage() {
 Usage: scripts/aws-perf/ec2-compare.sh [options]
 
 Options:
-  --region <aws-region>
+  --region <aws-region>             AWS region (default: us-west-2)
   --instance-profile <name>         IAM instance profile with AmazonSSMManagedInstanceCore
   --instance-type <type>            EC2 instance type (default: c6i.large)
   --subnet-id <subnet-id>           Optional; auto-detected when omitted
@@ -136,9 +137,6 @@ requires grep
 requires mktemp
 requires node
 
-if [[ -z "$REGION" ]]; then
-  REGION="$(aws configure get region 2>/dev/null || true)"
-fi
 [[ -n "$REGION" ]] || fail "AWS region is required (use --region or set AWS_REGION)"
 
 mkdir -p "$OUTPUT_DIR"

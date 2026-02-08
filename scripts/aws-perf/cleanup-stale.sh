@@ -1,20 +1,54 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+DEFAULT_REGION="us-west-2"
+REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-$DEFAULT_REGION}}"
+POSITIONAL_REGION=""
+
+usage() {
   cat <<'EOF'
-Usage: scripts/aws-perf/cleanup-stale.sh <region>
+Usage: scripts/aws-perf/cleanup-stale.sh [options] [region]
 
-Example:
-  scripts/aws-perf/cleanup-stale.sh us-east-1
+Options:
+  --region <aws-region>   AWS region (default: us-west-2)
+  -h, --help              Show help
+
+Examples:
+  scripts/aws-perf/cleanup-stale.sh
+  scripts/aws-perf/cleanup-stale.sh --region us-west-2
+  scripts/aws-perf/cleanup-stale.sh us-west-2
 EOF
-  exit 0
-fi
+}
 
-REGION="${1:-${AWS_REGION:-${AWS_DEFAULT_REGION:-}}}"
-if [[ -z "$REGION" ]]; then
-  echo "[aws-perf-cleanup] ERROR: region is required (arg1 or AWS_REGION)" >&2
-  exit 1
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --region)
+      if [[ $# -lt 2 ]]; then
+        echo "[aws-perf-cleanup] ERROR: --region requires a value" >&2
+        usage
+        exit 1
+      fi
+      REGION="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --*)
+      echo "[aws-perf-cleanup] ERROR: unknown argument: $1" >&2
+      usage
+      exit 1
+      ;;
+    *)
+      POSITIONAL_REGION="$1"
+      shift
+      ;;
+  esac
+done
+
+if [[ -n "$POSITIONAL_REGION" ]]; then
+  REGION="$POSITIONAL_REGION"
 fi
 
 NOW_EPOCH="$(date +%s)"
