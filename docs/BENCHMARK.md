@@ -61,3 +61,43 @@ npm run bench:run -- --scenario wreq.session.get.small --scenario wreq.session.g
 - Run on the same machine, on AC power, with minimal background load.
 - Prefer longer `--duration-ms` and more `--samples` until the reported CI margin is comfortably smaller than the improvement you’re targeting.
 - Keep parameters constant when comparing optimizations.
+
+## AWS isolated perf runs (recommended for low-noise gating)
+
+If you do not want to benchmark on your laptop/network, use the AWS CLI harness:
+
+1. Create the EC2 instance profile once (requires IAM permissions):
+
+```bash
+./scripts/aws-perf/setup-iam.sh
+```
+
+2. Run base vs head comparison on an ephemeral EC2 runner (Spot by default, auto-terminates):
+
+```bash
+./scripts/aws-perf/ec2-compare.sh --region us-east-1
+```
+
+Note: the runner clones from `origin` by default, so both refs must exist in the remote repository (push your branch/commit first if needed).
+
+The script:
+
+- Launches a short-lived EC2 instance with SSM (no inbound SSH required).
+- Runs the same benchmark scenarios for `--base-ref` and `--head-ref` on the same host.
+- Produces `tmp/aws-perf/<run-id>/summary.json` with per-scenario deltas and a pass/fail gate.
+- Terminates the instance automatically unless `--keep-instance` is passed.
+
+Useful options:
+
+- `--on-demand` to avoid Spot interruptions.
+- `--instance-type c6i.large` (default) for low cost and stable throughput.
+- `--threshold-pct 5` to set the regression gate.
+- `--scenarios 'wreq.session.get.small;wreq.session.get.4kb;wreq.isolated.get.small'` to limit scope.
+
+Safety cleanup:
+
+```bash
+./scripts/aws-perf/cleanup-stale.sh us-east-1
+```
+
+This terminates old perf instances tagged with expired TTL metadata.
