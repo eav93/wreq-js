@@ -7,6 +7,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RUN_ID="wreq-perf-$(date -u +%Y%m%dT%H%M%SZ)"
 INSTANCE_ID=""
 SHOULD_CLEANUP=true
+PARAMS_FILE=""
 
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
 INSTANCE_PROFILE_NAME="wreq-js-perf-ssm-profile"
@@ -86,11 +87,15 @@ base64_encode_file() {
   if base64 --help 2>/dev/null | grep -q -- "-w"; then
     base64 -w 0 "$path"
   else
-    base64 "$path" | tr -d '\n'
+    base64 <"$path" | tr -d '\n'
   fi
 }
 
 cleanup() {
+  if [[ -n "$PARAMS_FILE" ]]; then
+    rm -f "$PARAMS_FILE" || true
+  fi
+
   if [[ -n "$INSTANCE_ID" && "$SHOULD_CLEANUP" == true ]]; then
     log "Terminating instance $INSTANCE_ID"
     aws ec2 terminate-instances --region "$REGION" --instance-ids "$INSTANCE_ID" >/dev/null || true
@@ -178,10 +183,21 @@ EXPIRY_EPOCH="$(( $(date +%s) + TTL_HOURS * 3600 ))"
 
 launch_instance() {
   local market="$1"
-  local market_args=()
 
   if [[ "$market" == "spot" ]]; then
-    market_args=(--instance-market-options "MarketType=spot,SpotOptions={SpotInstanceType=one-time,InstanceInterruptionBehavior=terminate}")
+    aws ec2 run-instances \
+      --region "$REGION" \
+      --image-id "$AMI_ID" \
+      --instance-type "$INSTANCE_TYPE" \
+      --subnet-id "$SUBNET_ID" \
+      --security-group-ids "$SECURITY_GROUP_ID" \
+      --iam-instance-profile "Name=$INSTANCE_PROFILE_NAME" \
+      --block-device-mappings 'DeviceName=/dev/xvda,Ebs={VolumeSize=25,VolumeType=gp3,DeleteOnTermination=true}' \
+      --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$RUN_ID},{Key=Project,Value=wreq-js},{Key=Purpose,Value=perf-benchmark},{Key=RunId,Value=$RUN_ID},{Key=ExpiresEpoch,Value=$EXPIRY_EPOCH}]" \
+      --instance-market-options "MarketType=spot,SpotOptions={SpotInstanceType=one-time,InstanceInterruptionBehavior=terminate}" \
+      --query 'Instances[0].InstanceId' \
+      --output text
+    return
   fi
 
   aws ec2 run-instances \
@@ -193,7 +209,6 @@ launch_instance() {
     --iam-instance-profile "Name=$INSTANCE_PROFILE_NAME" \
     --block-device-mappings 'DeviceName=/dev/xvda,Ebs={VolumeSize=25,VolumeType=gp3,DeleteOnTermination=true}' \
     --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$RUN_ID},{Key=Project,Value=wreq-js},{Key=Purpose,Value=perf-benchmark},{Key=RunId,Value=$RUN_ID},{Key=ExpiresEpoch,Value=$EXPIRY_EPOCH}]" \
-    "${market_args[@]}" \
     --query 'Instances[0].InstanceId' \
     --output text
 }
@@ -250,13 +265,31 @@ CONCURRENCY=$(shell_quote "$CONCURRENCY") \
 THRESHOLD_PCT=$(shell_quote "$THRESHOLD_PCT") \
 bash /tmp/wreq-remote-compare.sh"
 
+PARAMS_FILE="$(mktemp)"
+
+node - "$PARAMS_FILE" "$REMOTE_SCRIPT_B64" "$run_command" <<'NODE'
+const fs = require("node:fs");
+const paramsPath = process.argv[2];
+const scriptB64 = process.argv[3];
+const runCommand = process.argv[4];
+const params = {
+  commands: [
+    "set -euo pipefail",
+    `echo '${scriptB64}' | base64 -d >/tmp/wreq-remote-compare.sh`,
+    "chmod +x /tmp/wreq-remote-compare.sh",
+    runCommand,
+  ],
+};
+fs.writeFileSync(paramsPath, JSON.stringify(params));
+NODE
+
 COMMAND_ID="$(aws ssm send-command \
   --region "$REGION" \
   --document-name "AWS-RunShellScript" \
   --instance-ids "$INSTANCE_ID" \
   --comment "wreq-js perf compare $RUN_ID" \
   --timeout-seconds 7200 \
-  --parameters "commands=set -euo pipefail,echo $REMOTE_SCRIPT_B64 | base64 -d >/tmp/wreq-remote-compare.sh,chmod +x /tmp/wreq-remote-compare.sh,$run_command" \
+  --parameters "file://$PARAMS_FILE" \
   --query 'Command.CommandId' \
   --output text)"
 

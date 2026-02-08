@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -eEuo pipefail
 
 require_env() {
   local key="$1"
@@ -29,19 +29,40 @@ log() {
   printf '[remote] %s\n' "$*"
 }
 
+dump_failure_context() {
+  local exit_code=$?
+  log "Command failed with exit code ${exit_code}. Dumping available logs from ${RESULT_DIR}:"
+
+  local found=false
+  for file in "$RESULT_DIR"/*.log; do
+    if [[ -f "$file" ]]; then
+      found=true
+      echo "----- ${file} (tail) -----"
+      tail -n 200 "$file" || true
+    fi
+  done
+
+  if [[ "$found" == false ]]; then
+    log "No log files found."
+  fi
+
+  exit "$exit_code"
+}
+trap dump_failure_context ERR
+
 base64_encode_file() {
   local path="$1"
   if base64 --help 2>/dev/null | grep -q -- "-w"; then
     base64 -w 0 "$path"
   else
-    base64 "$path" | tr -d '\n'
+    base64 <"$path" | tr -d '\n'
   fi
 }
 
 install_system_packages() {
   if command -v dnf >/dev/null 2>&1; then
     log "Installing packages via dnf"
-    dnf install -y git curl tar xz gzip gcc gcc-c++ make perl-core which >/dev/null
+    dnf install -y git tar xz gzip gcc gcc-c++ make perl-core which cmake clang clang-libs >/dev/null
     return
   fi
 
@@ -49,7 +70,7 @@ install_system_packages() {
     log "Installing packages via apt-get"
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y >/dev/null
-    apt-get install -y git curl ca-certificates build-essential xz-utils >/dev/null
+    apt-get install -y git curl ca-certificates build-essential xz-utils cmake clang libclang-dev >/dev/null
     return
   fi
 
@@ -106,13 +127,15 @@ ensure_rust() {
 }
 
 source_rust_env() {
+  export HOME="${HOME:-/root}"
+
   if [[ -f "/root/.cargo/env" ]]; then
     # shellcheck disable=SC1091
     source /root/.cargo/env
   fi
-  if [[ -f "$HOME/.cargo/env" ]]; then
+  if [[ -f "${HOME}/.cargo/env" ]]; then
     # shellcheck disable=SC1090
-    source "$HOME/.cargo/env"
+    source "${HOME}/.cargo/env"
   fi
 }
 
@@ -138,16 +161,24 @@ run_bench() {
   git -C "$repo_dir" reset --hard "$ref" >/dev/null
 
   log "Installing npm dependencies for ${label}"
-  (
+  if ! (
     cd "$repo_dir"
     npm ci --no-audit --no-fund >"$RESULT_DIR/${label}-npm.log" 2>&1
-  )
+  ); then
+    echo "----- ${RESULT_DIR}/${label}-npm.log (tail) -----" >&2
+    tail -n 200 "$RESULT_DIR/${label}-npm.log" >&2 || true
+    return 1
+  fi
 
   log "Building native module for ${label}"
-  (
+  if ! (
     cd "$repo_dir"
     npm run build:rust >"$build_log" 2>&1
-  )
+  ); then
+    echo "----- ${build_log} (tail) -----" >&2
+    tail -n 200 "$build_log" >&2 || true
+    return 1
+  fi
 
   local -a bench_args
   bench_args=(
@@ -167,10 +198,14 @@ run_bench() {
   bench_args+=("--json" "$json_out")
 
   log "Running benchmark ${label}"
-  (
+  if ! (
     cd "$repo_dir"
     npm run bench:run -- "${bench_args[@]}" >"$bench_log" 2>&1
-  )
+  ); then
+    echo "----- ${bench_log} (tail) -----" >&2
+    tail -n 200 "$bench_log" >&2 || true
+    return 1
+  fi
 }
 
 main() {
@@ -203,16 +238,78 @@ main() {
   run_bench "head" "$HEAD_REF" "$repo_dir"
 
   log "Generating comparison report"
-  (
-    cd "$repo_dir"
-    node scripts/aws-perf/compare-bench.mjs \
-      --base "$RESULT_DIR/base.json" \
-      --head "$RESULT_DIR/head.json" \
-      --threshold-pct "$THRESHOLD_PCT" \
-      --markdown "$RESULT_DIR/report.md" \
-      --json "$RESULT_DIR/report.json" \
-      --no-fail >"$RESULT_DIR/compare.log" 2>&1
-  )
+  node - "$RESULT_DIR/base.json" "$RESULT_DIR/head.json" "$THRESHOLD_PCT" "$RESULT_DIR/report.md" "$RESULT_DIR/report.json" >"$RESULT_DIR/compare.log" 2>&1 <<'NODE'
+const fs = require("node:fs");
+
+const basePath = process.argv[2];
+const headPath = process.argv[3];
+const thresholdPct = Number(process.argv[4]);
+const markdownPath = process.argv[5];
+const jsonPath = process.argv[6];
+
+const baseRun = JSON.parse(fs.readFileSync(basePath, "utf8"));
+const headRun = JSON.parse(fs.readFileSync(headPath, "utf8"));
+
+const baseMap = new Map(baseRun.results.map((result) => [result.name, result]));
+const headMap = new Map(headRun.results.map((result) => [result.name, result]));
+
+const names = [...baseMap.keys()].filter((name) => headMap.has(name)).sort();
+const scenarios = names.map((name) => {
+  const base = baseMap.get(name);
+  const head = headMap.get(name);
+  const deltaPct = ((head.mean - base.mean) / base.mean) * 100;
+  const regression = deltaPct <= -thresholdPct;
+  const improvement = deltaPct >= thresholdPct;
+  return {
+    name,
+    baseMean: base.mean,
+    headMean: head.mean,
+    deltaPct,
+    baseCiPct: base.ci95.marginPct,
+    headCiPct: head.ci95.marginPct,
+    status: regression ? "REGRESSION" : improvement ? "IMPROVEMENT" : "OK",
+  };
+});
+
+const regressions = scenarios.filter((item) => item.status === "REGRESSION").map((item) => item.name);
+const report = {
+  generatedAt: new Date().toISOString(),
+  thresholdPct,
+  baseCommit: baseRun.git?.commit,
+  headCommit: headRun.git?.commit,
+  regressions,
+  pass: regressions.length === 0,
+  scenarios,
+};
+
+const num = (value) => value.toLocaleString("en-US", { maximumFractionDigits: 2 });
+const pct = (value) => `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
+
+const lines = [];
+lines.push("# AWS Perf Compare");
+lines.push("");
+lines.push(`- Generated: ${report.generatedAt}`);
+lines.push(`- Threshold: ${report.thresholdPct}% throughput drop => regression`);
+if (report.baseCommit) lines.push(`- Base commit: ${report.baseCommit}`);
+if (report.headCommit) lines.push(`- Head commit: ${report.headCommit}`);
+lines.push("");
+lines.push("| Scenario | Base req/s | Head req/s | Delta | Status | Base CI | Head CI |");
+lines.push("|---|---:|---:|---:|---|---:|---:|");
+for (const row of scenarios) {
+  lines.push(
+    `| ${row.name} | ${num(row.baseMean)} | ${num(row.headMean)} | ${pct(row.deltaPct)} | ${row.status} | ±${row.baseCiPct.toFixed(2)}% | ±${row.headCiPct.toFixed(2)}% |`,
+  );
+}
+lines.push("");
+lines.push(`## Gate: ${report.pass ? "PASS" : "FAIL"}`);
+if (!report.pass) {
+  lines.push(`Regressions: ${report.regressions.join(", ")}`);
+}
+
+const markdown = lines.join("\n");
+fs.writeFileSync(markdownPath, markdown, "utf8");
+fs.writeFileSync(jsonPath, JSON.stringify(report, null, 2), "utf8");
+NODE
 
   cat "$RESULT_DIR/report.md"
   echo ""
