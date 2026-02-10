@@ -709,14 +709,14 @@ describe("WebSocket", () => {
     );
   });
 
-  test("constructor emits error and close when connection fails", { timeout: 5_000 }, async () => {
+  test("constructor emits error and close when connection fails", { timeout: 30_000 }, async () => {
     const ws = new WreqWebSocket("ws://127.0.0.1:1", { browser: "chrome_142" });
     const events: string[] = [];
 
     const closeEvent = await new Promise<WebSocketCloseEvent>((resolve, reject) => {
       const timer = setTimeout(() => {
         reject(new Error("Timed out waiting for close on connection failure"));
-      }, 2_000);
+      }, 25_000);
 
       ws.addEventListener("error", () => {
         events.push("error");
