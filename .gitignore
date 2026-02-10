@@ -4,6 +4,7 @@ node_modules/
 # Build outputs
 dist/
 rust/target/
+rust/bench-server/target/
 rust/wreq-js.node
 *.node
 
