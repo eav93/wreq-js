@@ -437,8 +437,10 @@ async fn make_request_inner(
         request = request.body(body);
     }
 
-    // Apply timeout
-    request = request.timeout(Duration::from_millis(timeout));
+    // Apply timeout (0 means no timeout)
+    if timeout > 0 {
+        request = request.timeout(Duration::from_millis(timeout));
+    }
 
     request = request.cookie_provider(cookie_jar);
 

@@ -317,8 +317,8 @@ describe("Request validation", () => {
     );
 
     await assert.rejects(
-      wreqFetch(httpUrl("/get"), { browser: "chrome_142", timeout: 0 }),
-      (error: unknown) => error instanceof RequestError && /greater than 0/.test(error.message),
+      wreqFetch(httpUrl("/get"), { browser: "chrome_142", timeout: -1 }),
+      (error: unknown) => error instanceof RequestError && /0 \(no timeout\) or a positive number/.test(error.message),
     );
 
     await assert.rejects(
@@ -434,8 +434,9 @@ describe("Session validation", () => {
       );
 
       await assert.rejects(
-        session.fetch(httpUrl("/get"), { timeout: 0 }),
-        (error: unknown) => error instanceof RequestError && /greater than 0/.test(error.message),
+        session.fetch(httpUrl("/get"), { timeout: -1 }),
+        (error: unknown) =>
+          error instanceof RequestError && /0 \(no timeout\) or a positive number/.test(error.message),
       );
 
       const response = await session.fetch(httpUrl("/headers"), {

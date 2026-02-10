@@ -1519,8 +1519,8 @@ function validateTimeout(timeout?: number): void {
     throw new RequestError("Timeout must be a finite number");
   }
 
-  if (timeout <= 0) {
-    throw new RequestError("Timeout must be greater than 0");
+  if (timeout < 0) {
+    throw new RequestError("Timeout must be 0 (no timeout) or a positive number");
   }
 }
 

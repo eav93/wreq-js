@@ -50,7 +50,7 @@ function fetch(input: string | URL | Request, init?: RequestInit): Promise<Respo
 </ParamField>
 
 <ParamField path="timeout" type="number" default="30000">
-  Request timeout in milliseconds.
+  Request timeout in milliseconds. Set to `0` to disable the timeout.
 </ParamField>
 
 <ParamField path="signal" type="AbortSignal">
