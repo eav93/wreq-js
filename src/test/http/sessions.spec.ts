@@ -79,4 +79,17 @@ describe("HTTP sessions", () => {
       "Using a closed session should fail",
     );
   });
+
+  test("rejects changing session proxy per request", async () => {
+    const session = await createSession({ browser: "chrome_142" });
+
+    try {
+      await assert.rejects(
+        session.fetch(httpUrl("/get"), { proxy: "http://proxy.example.com:8080", timeout: 5_000 }),
+        (error: unknown) => error instanceof RequestError && /Session proxy cannot be changed/.test(error.message),
+      );
+    } finally {
+      await session.close();
+    }
+  });
 });

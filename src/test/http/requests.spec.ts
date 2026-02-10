@@ -10,6 +10,17 @@ const isLocalHttpBase =
   (process.env.HTTP_TEST_BASE_URL ?? "").includes("localhost");
 
 describe("HTTP requests", () => {
+  test("accepts URL objects", async () => {
+    const response = await wreqFetch(new URL(httpUrl("/get")), {
+      browser: "chrome_142",
+      timeout: 10_000,
+    });
+
+    assert.strictEqual(response.status, 200);
+    const body = await response.json<{ method?: string }>();
+    assert.strictEqual(body.method, "GET");
+  });
+
   test("performs a basic GET request", async () => {
     const response = await wreqFetch(httpUrl("/get"), {
       browser: "chrome_131",
@@ -155,6 +166,41 @@ describe("HTTP requests", () => {
     assert.ok(response.bodyUsed, "stream consumption should mark the body as used");
   });
 
+  test("cancelling a response stream marks body as used and prevents re-read", { skip: !isLocalHttpBase }, async () => {
+    const response = await wreqFetch(httpUrl("/stream/chunks?n=8&size=128"), {
+      browser: "chrome_142",
+      timeout: 10_000,
+    });
+
+    const reader = response.body?.getReader();
+    assert.ok(reader, "body reader should be available");
+
+    const firstChunk = await reader.read();
+    assert.strictEqual(firstChunk.done, false);
+    assert.ok((firstChunk.value?.byteLength ?? 0) > 0);
+
+    await reader.cancel("stop");
+
+    assert.strictEqual(response.bodyUsed, true, "cancel() should mark body as used");
+    await assert.rejects(async () => response.arrayBuffer(), /already\s+.*used/i);
+  });
+
+  test("reading body stream then text consumes once", { skip: !isLocalHttpBase }, async () => {
+    const response = await wreqFetch(httpUrl("/stream/chunks?n=3&size=32"), {
+      browser: "chrome_142",
+      timeout: 10_000,
+    });
+
+    assert.ok(response.body, "body stream should be available");
+    assert.strictEqual(response.bodyUsed, false);
+
+    const text = await response.text();
+    assert.ok(text.length > 0);
+    assert.strictEqual(response.bodyUsed, true);
+
+    await assert.rejects(async () => response.text(), /already\s+.*used/i);
+  });
+
   test("follows redirects by default", { skip: !isLocalHttpBase }, async () => {
     const response = await wreqFetch(httpUrl("/redirect"), {
       browser: "chrome_142",
@@ -204,6 +250,22 @@ describe("HTTP requests", () => {
     assert.strictEqual(body.path, "/trace");
   });
 
+  test("supports PUT, DELETE, PATCH, and OPTIONS requests", { skip: !isLocalHttpBase }, async () => {
+    const methods = ["PUT", "DELETE", "PATCH", "OPTIONS"] as const;
+
+    for (const method of methods) {
+      const response = await wreqFetch(httpUrl("/get"), {
+        method,
+        browser: "chrome_142",
+        timeout: 10_000,
+      });
+
+      assert.strictEqual(response.status, 200);
+      const body = await response.json<{ method?: string }>();
+      assert.strictEqual(body.method, method);
+    }
+  });
+
   test("supports CONNECT requests", { skip: !isLocalHttpBase }, async () => {
     const response = await wreqFetch(httpUrl("/connect-target"), {
       method: "CONNECT",
@@ -215,6 +277,21 @@ describe("HTTP requests", () => {
     const bodyText = await response.text();
     // Some HTTP stacks may ignore bodies on CONNECT; accept empty but ensure no parse errors.
     assert.ok(bodyText.length >= 0);
+  });
+
+  test("sets response.ok for 2xx statuses", async () => {
+    const successResponse = await wreqFetch(httpUrl("/json"), {
+      browser: "chrome_142",
+      timeout: 10_000,
+    });
+    assert.strictEqual(successResponse.ok, true);
+
+    const notFoundResponse = await wreqFetch(httpUrl("/missing-route"), {
+      browser: "chrome_142",
+      timeout: 10_000,
+    });
+    assert.strictEqual(notFoundResponse.status, 404);
+    assert.strictEqual(notFoundResponse.ok, false);
   });
 
   test("propagates AbortSignal to native I/O", { skip: !isLocalHttpBase }, async () => {

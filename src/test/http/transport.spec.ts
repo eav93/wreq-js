@@ -126,6 +126,13 @@ describe("Transport API", () => {
     const transport = await createTransport({ browser: "chrome_142" });
 
     try {
+      const okResponse = await wreqFetch(httpUrl("/get"), {
+        transport,
+        proxy: undefined,
+        timeout: 10_000,
+      } as never);
+      assert.strictEqual(okResponse.status, 200);
+
       await assert.rejects(
         wreqFetch(httpUrl("/get"), { transport, browser: "chrome_142" }),
         (error: unknown) =>

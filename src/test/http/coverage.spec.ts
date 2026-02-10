@@ -103,8 +103,36 @@ describe("Request helpers", () => {
       sessionId: "legacy-session",
       cookieMode: "session",
       timeout: 10_000,
-    } as never);
+    });
     assert.strictEqual(legacySessionResponse.status, 200);
+  });
+
+  test("request() accepts signal/session/cookieMode fields", async () => {
+    const controller = new AbortController();
+    const session = await createSession({ browser: "chrome_142" });
+
+    try {
+      const signalResponse = await request({
+        url: httpUrl("/get"),
+        browser: "chrome_142",
+        signal: controller.signal,
+        timeout: 10_000,
+      });
+      assert.strictEqual(signalResponse.status, 200);
+
+      await session.fetch(httpUrl("/cookies/set?token=legacy"), { timeout: 10_000 });
+
+      const sessionResponse = await request({
+        url: httpUrl("/cookies"),
+        session,
+        cookieMode: "session",
+        timeout: 10_000,
+      });
+      const cookies = await sessionResponse.json<{ cookies: Record<string, string> }>();
+      assert.strictEqual(cookies.cookies.token, "legacy");
+    } finally {
+      await session.close();
+    }
   });
 
   test("accepts array, iterable, and object headers", async () => {
@@ -167,6 +195,36 @@ describe("Request helpers", () => {
     } finally {
       delete (Object.prototype as { [key: string]: unknown })["X-Inherited"];
     }
+  });
+
+  test("accepts Request objects and init overrides", async () => {
+    const requestInput = new Request(httpUrl("/get"), {
+      method: "POST",
+      headers: {
+        "X-From-Request": "yes",
+      },
+      body: "payload",
+    });
+
+    const response = await wreqFetch(requestInput, {
+      browser: "chrome_142",
+      timeout: 10_000,
+      disableDefaultHeaders: true,
+      headers: {
+        "X-From-Init": "yes",
+      },
+    });
+
+    const body = await response.json<{ method: string; headers: Record<string, string> }>();
+    assert.strictEqual(body.method, "POST");
+    assert.strictEqual(body.headers["X-From-Init"], "yes");
+    assert.strictEqual(body.headers["X-From-Request"], undefined);
+  });
+
+  test("RequestError is also a TypeError for compatibility checks", () => {
+    const error = new RequestError("boom");
+    assert.ok(error instanceof RequestError);
+    assert.ok(error instanceof TypeError);
   });
 });
 
@@ -239,8 +297,18 @@ describe("Request validation", () => {
     );
 
     await assert.rejects(
+      wreqFetch(httpUrl("/get"), { browser: "" as never }),
+      (error: unknown) => error instanceof RequestError && /must not be empty/.test(error.message),
+    );
+
+    await assert.rejects(
       wreqFetch(httpUrl("/get"), { browser: "chrome_142", os: "plan9" as never }),
       (error: unknown) => error instanceof RequestError && /Invalid operating system/.test(error.message),
+    );
+
+    await assert.rejects(
+      wreqFetch(httpUrl("/get"), { browser: "chrome_142", os: "" as never }),
+      (error: unknown) => error instanceof RequestError && /must not be empty/.test(error.message),
     );
 
     await assert.rejects(
@@ -463,5 +531,47 @@ describe("Response helpers", () => {
 
     const empty = new Response(makePayload({ bodyBytes: null, bodyHandle: null }) as never, "http://example.com/final");
     assert.strictEqual(empty.body, null);
+  });
+
+  test("supports blob and formData helpers", async () => {
+    const blobResponse = new Response(
+      makePayload({
+        headers: [["Content-Type", "text/plain"]],
+        bodyBytes: Buffer.from("blob-text"),
+      }) as never,
+      "http://example.com/final",
+    );
+    const blob = await blobResponse.blob();
+    assert.strictEqual(blob.type, "text/plain");
+    assert.strictEqual(await blob.text(), "blob-text");
+
+    const formResponse = new Response(
+      makePayload({
+        headers: [["Content-Type", "application/x-www-form-urlencoded;charset=UTF-8"]],
+        bodyBytes: Buffer.from("alpha=one&beta=two"),
+      }) as never,
+      "http://example.com/final",
+    );
+    const formData = await formResponse.formData();
+    assert.strictEqual(formData.get("alpha"), "one");
+    assert.strictEqual(formData.get("beta"), "two");
+  });
+
+  test("allows clone after body access before consumption", async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode("clone-late"));
+        controller.close();
+      },
+    });
+
+    const response = new Response(makePayload() as never, "http://example.com/final", stream);
+    assert.ok(response.body, "body should be accessible");
+
+    const clone = response.clone();
+    const [left, right] = await Promise.all([response.text(), clone.text()]);
+    assert.strictEqual(left, "clone-late");
+    assert.strictEqual(right, "clone-late");
   });
 });

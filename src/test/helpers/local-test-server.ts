@@ -410,12 +410,40 @@ export async function startLocalTestServer(): Promise<LocalTestServer> {
       const acceptKey = createHash("sha1")
         .update(secKey + WS_MAGIC_STRING)
         .digest("base64");
+      const requestedProtocolsRaw = req.headers["sec-websocket-protocol"] as string | string[] | undefined;
+      const requestedProtocols =
+        typeof requestedProtocolsRaw === "string"
+          ? requestedProtocolsRaw
+              .split(",")
+              .map((entry) => entry.trim())
+              .filter((entry) => entry.length > 0)
+          : Array.isArray(requestedProtocolsRaw)
+            ? requestedProtocolsRaw
+                .flatMap((entry) => entry.split(","))
+                .map((entry) => entry.trim())
+                .filter((entry) => entry.length > 0)
+            : [];
+      const requiredProtocol = url.searchParams.get("requireProtocol");
+
+      if (requiredProtocol && !requestedProtocols.includes(requiredProtocol)) {
+        socket.write("HTTP/1.1 426 Upgrade Required\r\nConnection: close\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+
+      const selectedProtocolFromQuery = url.searchParams.get("selectProtocol");
+      const selectedProtocol =
+        selectedProtocolFromQuery ??
+        (requiredProtocol && requestedProtocols.includes(requiredProtocol) ? requiredProtocol : undefined);
       const responseHeaders = [
         "HTTP/1.1 101 Switching Protocols",
         "Upgrade: websocket",
         "Connection: Upgrade",
         `Sec-WebSocket-Accept: ${acceptKey}`,
       ];
+      if (selectedProtocol) {
+        responseHeaders.push(`Sec-WebSocket-Protocol: ${selectedProtocol}`);
+      }
 
       socket.write(`${responseHeaders.join("\r\n")}\r\n\r\n`);
 
@@ -434,7 +462,10 @@ export async function startLocalTestServer(): Promise<LocalTestServer> {
         }
       }
 
-      setupEchoWebSocket(socket, serverClose);
+      const echoCookie = url.searchParams.get("echoCookie") === "1";
+      const welcomeText = echoCookie ? `cookie:${req.headers.cookie ?? ""}` : undefined;
+
+      setupEchoWebSocket(socket, serverClose, welcomeText);
     } catch (error) {
       console.error("Local test server WebSocket upgrade error:", error);
       socket.destroy();
@@ -442,7 +473,7 @@ export async function startLocalTestServer(): Promise<LocalTestServer> {
   }
 }
 
-function setupEchoWebSocket(socket: Socket, serverClose?: { code: number; reason: string }) {
+function setupEchoWebSocket(socket: Socket, serverClose?: { code: number; reason: string }, welcomeText?: string) {
   let buffer = Buffer.alloc(0);
   let closed = false;
 
@@ -468,6 +499,10 @@ function setupEchoWebSocket(socket: Socket, serverClose?: { code: number; reason
     closed = true;
     socket.end();
     return;
+  }
+
+  if (welcomeText !== undefined) {
+    sendFrame(0x1, Buffer.from(welcomeText, "utf8"));
   }
 
   function parseFrames() {
