@@ -12,7 +12,7 @@ PARAMS_FILE=""
 DEFAULT_REGION="us-west-2"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-$DEFAULT_REGION}}"
 INSTANCE_PROFILE_NAME="wreq-js-perf-ssm-profile"
-INSTANCE_TYPE="c6i.large"
+INSTANCE_TYPE="c6i.xlarge"
 AUTO_CHEAPEST_REGION=false
 PRICING_ONLY=false
 USE_SPOT=true
@@ -24,10 +24,10 @@ HEAD_REF="$(git -C "$ROOT_DIR" rev-parse HEAD)"
 REPO_URL="$(git -C "$ROOT_DIR" remote get-url origin)"
 TTL_HOURS=2
 THRESHOLD_PCT=5
-DURATION_MS=1500
-SAMPLES=10
-WARMUP=2
-CONCURRENCY=8
+DURATION_MS=3000
+SAMPLES=15
+WARMUP=3
+CONCURRENCY=16
 SCENARIOS="wreq.session.get.small;wreq.transport.get.small;wreq.session.get.4kb;wreq.session.post.32b;wreq.isolated.get.small;node.fetch.get.small"
 OUTPUT_DIR="$ROOT_DIR/tmp/aws-perf/$RUN_ID"
 PRICING_JSON=""
@@ -394,6 +394,21 @@ fi
 
 REMOTE_SCRIPT_B64="$(base64_encode_file "$SCRIPT_DIR/remote-compare.sh")"
 
+# Bundle bench overlay: the bench runner TS files + Rust bench server crate.
+# These are sent to EC2 so every commit (even old ones) uses the same bench
+# infrastructure from the current working tree.
+BENCH_OVERLAY_TAR="$(mktemp)"
+log "Packaging bench overlay from local tree"
+tar -cf "$BENCH_OVERLAY_TAR" \
+  -C "$ROOT_DIR" \
+  src/bench/run.ts \
+  src/bench/local-bench-server.ts \
+  rust/bench-server/Cargo.toml \
+  rust/bench-server/src/main.rs \
+  2>/dev/null || true
+BENCH_OVERLAY_B64="$(base64_encode_file "$BENCH_OVERLAY_TAR")"
+rm -f "$BENCH_OVERLAY_TAR"
+
 run_command="BASE_REF=$(shell_quote "$BASE_REF") \
 HEAD_REF=$(shell_quote "$HEAD_REF") \
 REPO_URL=$(shell_quote "$REPO_URL") \
@@ -403,20 +418,23 @@ SAMPLES=$(shell_quote "$SAMPLES") \
 WARMUP=$(shell_quote "$WARMUP") \
 CONCURRENCY=$(shell_quote "$CONCURRENCY") \
 THRESHOLD_PCT=$(shell_quote "$THRESHOLD_PCT") \
+BENCH_OVERLAY_TAR=/tmp/wreq-bench-overlay.tar \
 bash /tmp/wreq-remote-compare.sh"
 
 PARAMS_FILE="$(mktemp)"
 
-node - "$PARAMS_FILE" "$REMOTE_SCRIPT_B64" "$run_command" <<'NODE'
+node - "$PARAMS_FILE" "$REMOTE_SCRIPT_B64" "$BENCH_OVERLAY_B64" "$run_command" <<'NODE'
 const fs = require("node:fs");
 const paramsPath = process.argv[2];
 const scriptB64 = process.argv[3];
-const runCommand = process.argv[4];
+const overlayB64 = process.argv[4];
+const runCommand = process.argv[5];
 const params = {
   commands: [
     "set -euo pipefail",
     `echo '${scriptB64}' | base64 -d >/tmp/wreq-remote-compare.sh`,
     "chmod +x /tmp/wreq-remote-compare.sh",
+    `echo '${overlayB64}' | base64 -d >/tmp/wreq-bench-overlay.tar`,
     runCommand,
   ],
 };

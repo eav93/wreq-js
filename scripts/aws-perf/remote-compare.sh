@@ -62,7 +62,7 @@ base64_encode_file() {
 install_system_packages() {
   if command -v dnf >/dev/null 2>&1; then
     log "Installing packages via dnf"
-    dnf install -y git tar xz gzip gcc gcc-c++ make perl-core which cmake clang clang-libs >/dev/null
+    dnf install -y git tar xz gzip gcc gcc-c++ make perl-core which cmake clang clang-libs util-linux >/dev/null
     return
   fi
 
@@ -70,12 +70,66 @@ install_system_packages() {
     log "Installing packages via apt-get"
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y >/dev/null
-    apt-get install -y git curl ca-certificates build-essential xz-utils cmake clang libclang-dev >/dev/null
+    apt-get install -y git curl ca-certificates build-essential xz-utils cmake clang libclang-dev util-linux >/dev/null
     return
   fi
 
   echo "Unsupported package manager; need dnf or apt-get" >&2
   exit 1
+}
+
+detect_cpu_pinning() {
+  SERVER_CPU=""
+  BENCH_TASKSET=""
+
+  if ! command -v taskset >/dev/null 2>&1; then
+    log "taskset not available; skipping CPU pinning"
+    return
+  fi
+
+  local ncpus
+  ncpus="$(nproc 2>/dev/null || echo 1)"
+  if [[ "$ncpus" -lt 4 ]]; then
+    log "Only ${ncpus} CPUs available; skipping CPU pinning (need >= 4)"
+    return
+  fi
+
+  SERVER_CPU="0"
+  local last_cpu=$((ncpus - 1))
+  BENCH_TASKSET="taskset -c 1-${last_cpu}"
+  log "CPU pinning enabled: server on CPU ${SERVER_CPU}, bench on CPUs 1-${last_cpu}"
+}
+
+tune_cpu_for_benchmarking() {
+  log "Tuning CPU for stable benchmarking"
+
+  # Set CPU governor to performance (fixed frequency, no power-saving transitions)
+  local tuned=0
+  for gov in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+    if [[ -w "$gov" ]]; then
+      echo performance > "$gov" 2>/dev/null && tuned=$((tuned + 1))
+    fi
+  done
+  if [[ "$tuned" -gt 0 ]]; then
+    log "Set CPU governor to 'performance' on ${tuned} cores"
+  else
+    log "Could not set CPU governor (no cpufreq sysfs or not writable)"
+  fi
+
+  # Disable Intel turbo boost (eliminates frequency variance between cores)
+  if [[ -w /sys/devices/system/cpu/intel_pstate/no_turbo ]]; then
+    echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null \
+      && log "Disabled Intel turbo boost"
+  elif [[ -w /sys/devices/system/cpu/cpufreq/boost ]]; then
+    echo 0 > /sys/devices/system/cpu/cpufreq/boost 2>/dev/null \
+      && log "Disabled AMD boost"
+  fi
+
+  # Stop irqbalance so IRQs don't migrate to benchmark cores mid-run
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl stop irqbalance 2>/dev/null \
+      && log "Stopped irqbalance"
+  fi
 }
 
 ensure_node() {
@@ -148,21 +202,77 @@ normalize_repo_url() {
   printf '%s\n' "$input"
 }
 
-run_bench() {
+# Build shared bench infrastructure (runner code + Rust server binary).
+# Sources come from the BENCH_OVERLAY_TAR sent by ec2-compare.sh (the
+# caller's working tree), NOT from the cloned repo.  This means even when
+# benchmarking old tags the Rust bench server and latest runner are used.
+# Stored in BENCH_OVERLAY_DIR and copied into every commit dir by build_commit.
+build_bench_overlay() {
+  local overlay_dir="$BENCH_OVERLAY_DIR"
+  local tmp_dir="$WORK_ROOT/_bench-overlay-build"
+
+  rm -rf "$overlay_dir" "$tmp_dir"
+  mkdir -p "$overlay_dir/src/bench" "$tmp_dir"
+
+  # Extract bench files sent from the caller
+  if [[ -n "${BENCH_OVERLAY_TAR:-}" && -f "$BENCH_OVERLAY_TAR" ]]; then
+    tar -xf "$BENCH_OVERLAY_TAR" -C "$tmp_dir"
+  else
+    log "No bench overlay tar provided; both sides will use their own bench code"
+    return
+  fi
+
+  # Copy bench runner source files
+  if [[ -f "$tmp_dir/src/bench/run.ts" ]]; then
+    cp -f "$tmp_dir/src/bench/run.ts" "$overlay_dir/src/bench/run.ts"
+  fi
+  if [[ -f "$tmp_dir/src/bench/local-bench-server.ts" ]]; then
+    cp -f "$tmp_dir/src/bench/local-bench-server.ts" "$overlay_dir/src/bench/local-bench-server.ts"
+  fi
+
+  # Build Rust bench server binary from the extracted crate
+  if [[ -f "$tmp_dir/rust/bench-server/Cargo.toml" ]]; then
+    log "Building shared Rust bench server"
+    local build_log="$RESULT_DIR/bench-server-build.log"
+    if (
+      cd "$tmp_dir"
+      cargo build --release --manifest-path rust/bench-server/Cargo.toml >"$build_log" 2>&1
+    ); then
+      cp -f "$tmp_dir/rust/bench-server/target/release/wreq-bench-server" \
+            "$overlay_dir/bench-server-binary"
+      log "Rust bench server built successfully"
+    else
+      log "Rust bench server build failed; both sides will use Node.js server"
+      echo "----- ${build_log} (tail) -----" >&2
+      tail -n 50 "$build_log" >&2 || true
+    fi
+  else
+    log "No bench server crate in overlay; both sides will use Node.js server"
+  fi
+
+  rm -rf "$tmp_dir"
+}
+
+# Build a commit into its own directory ready for benchmarking.
+# Usage: build_commit <label> <ref> <source_repo>
+build_commit() {
   local label="$1"
   local ref="$2"
-  local repo_dir="$3"
-  local json_out="$RESULT_DIR/${label}.json"
+  local source_repo="$3"
+  local target_dir="$WORK_ROOT/$label"
   local build_log="$RESULT_DIR/${label}-build.log"
-  local bench_log="$RESULT_DIR/${label}-bench.log"
+
+  log "Preparing ${label} directory"
+  rm -rf "$target_dir"
+  cp -a "$source_repo" "$target_dir"
 
   log "Checking out ${label} ref ${ref}"
-  git -C "$repo_dir" checkout --force "$ref" >/dev/null
-  git -C "$repo_dir" reset --hard "$ref" >/dev/null
+  git -C "$target_dir" checkout --force "$ref" >/dev/null
+  git -C "$target_dir" reset --hard "$ref" >/dev/null
 
   log "Installing npm dependencies for ${label}"
   if ! (
-    cd "$repo_dir"
+    cd "$target_dir"
     npm ci --no-audit --no-fund >"$RESULT_DIR/${label}-npm.log" 2>&1
   ); then
     echo "----- ${RESULT_DIR}/${label}-npm.log (tail) -----" >&2
@@ -172,7 +282,7 @@ run_bench() {
 
   log "Building native module for ${label}"
   if ! (
-    cd "$repo_dir"
+    cd "$target_dir"
     npm run build:rust >"$build_log" 2>&1
   ); then
     echo "----- ${build_log} (tail) -----" >&2
@@ -180,27 +290,45 @@ run_bench() {
     return 1
   fi
 
+  # Overlay shared bench infrastructure (runner + server) from HEAD so that
+  # every commit — even old ones — uses the same Rust bench server and the
+  # same measurement code.  Only the native module under test differs.
+  if [[ -n "${BENCH_OVERLAY_DIR:-}" && -d "$BENCH_OVERLAY_DIR" ]]; then
+    log "Overlaying shared bench infra onto ${label}"
+    cp -f "$BENCH_OVERLAY_DIR/src/bench/run.ts"               "$target_dir/src/bench/run.ts"
+    cp -f "$BENCH_OVERLAY_DIR/src/bench/local-bench-server.ts" "$target_dir/src/bench/local-bench-server.ts"
+    if [[ -f "$BENCH_OVERLAY_DIR/bench-server-binary" ]]; then
+      mkdir -p "$target_dir/rust/bench-server/target/release"
+      cp -f "$BENCH_OVERLAY_DIR/bench-server-binary" \
+            "$target_dir/rust/bench-server/target/release/wreq-bench-server"
+    fi
+  fi
+}
+
+# Run a single scenario against a pre-built commit directory.
+# Usage: run_scenario <label> <scenario>
+run_scenario() {
+  local label="$1"
+  local scenario="$2"
+  local work_dir="$WORK_ROOT/$label"
+  local json_out="$RESULT_DIR/${label}--${scenario}.json"
+  local bench_log="$RESULT_DIR/${label}--${scenario}-bench.log"
+
   local -a bench_args
   bench_args=(
     "--duration-ms" "$DURATION_MS"
     "--samples" "$SAMPLES"
     "--warmup" "$WARMUP"
     "--concurrency" "$CONCURRENCY"
+    "--scenario" "$scenario"
+    "--json" "$json_out"
   )
 
-  IFS=';' read -r -a scenario_array <<< "$SCENARIOS"
-  for scenario in "${scenario_array[@]}"; do
-    if [[ -n "$scenario" ]]; then
-      bench_args+=("--scenario" "$scenario")
-    fi
-  done
-
-  bench_args+=("--json" "$json_out")
-
-  log "Running benchmark ${label}"
+  log "Running ${label} / ${scenario}"
   if ! (
-    cd "$repo_dir"
-    npm run bench:run -- "${bench_args[@]}" >"$bench_log" 2>&1
+    cd "$work_dir"
+    export BENCH_SERVER_CPU="${SERVER_CPU:-}"
+    ${BENCH_TASKSET:-} npm run bench:run -- "${bench_args[@]}" >"$bench_log" 2>&1
   ); then
     echo "----- ${bench_log} (tail) -----" >&2
     tail -n 200 "$bench_log" >&2 || true
@@ -208,11 +336,57 @@ run_bench() {
   fi
 }
 
+# Merge per-scenario JSON files into a single combined result file.
+# Usage: merge_results <label>
+merge_results() {
+  local label="$1"
+  local merged="$RESULT_DIR/${label}.json"
+
+  node - "$label" "$RESULT_DIR" "$merged" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const label = process.argv[2];
+const resultDir = process.argv[3];
+const outPath = process.argv[4];
+
+const prefix = `${label}--`;
+const files = fs.readdirSync(resultDir)
+  .filter((f) => f.startsWith(prefix) && f.endsWith(".json"))
+  .sort();
+
+if (files.length === 0) {
+  console.error(`No scenario result files found for label: ${label}`);
+  process.exit(1);
+}
+
+// Use metadata from the first file as the base
+const first = JSON.parse(fs.readFileSync(path.join(resultDir, files[0]), "utf8"));
+const merged = {
+  startedAt: first.startedAt,
+  git: first.git,
+  env: first.env,
+  config: first.config,
+  server: first.server,
+  results: [],
+};
+
+for (const file of files) {
+  const data = JSON.parse(fs.readFileSync(path.join(resultDir, file), "utf8"));
+  merged.results.push(...data.results);
+}
+
+fs.writeFileSync(outPath, JSON.stringify(merged, null, 2));
+NODE
+}
+
 main() {
   install_system_packages
   ensure_node
   ensure_rust
   source_rust_env
+  detect_cpu_pinning
+  tune_cpu_for_benchmarking
 
   local normalized_repo_url
   normalized_repo_url="$(normalize_repo_url "$REPO_URL")"
@@ -234,8 +408,36 @@ main() {
     exit 1
   fi
 
-  run_bench "base" "$BASE_REF" "$repo_dir"
-  run_bench "head" "$HEAD_REF" "$repo_dir"
+  # Materialize blobs for both refs before copying
+  git -C "$repo_dir" checkout --force "$BASE_REF" >/dev/null
+  git -C "$repo_dir" checkout --force "$HEAD_REF" >/dev/null
+
+  # Build shared bench infrastructure from the overlay tar sent by
+  # ec2-compare.sh (the caller's working tree).  The bench runner and
+  # bench server are test infra, not code-under-test, so both BASE and
+  # HEAD must share the same version for a fair comparison.
+  BENCH_OVERLAY_DIR="$WORK_ROOT/bench-overlay"
+  export BENCH_OVERLAY_DIR
+  build_bench_overlay
+
+  # Build both commits into separate directories
+  build_commit "base" "$BASE_REF" "$repo_dir"
+  build_commit "head" "$HEAD_REF" "$repo_dir"
+
+  # Interleaved A/B: for each scenario, run base then head back-to-back.
+  # This ensures system state (thermal, caches, scheduling) is matched
+  # per-scenario rather than accumulating drift across all scenarios.
+  IFS=';' read -r -a scenario_array <<< "$SCENARIOS"
+  for scenario in "${scenario_array[@]}"; do
+    [[ -n "$scenario" ]] || continue
+    log "=== Interleaved pair: ${scenario} ==="
+    run_scenario "base" "$scenario"
+    run_scenario "head" "$scenario"
+  done
+
+  # Merge per-scenario results into base.json / head.json
+  merge_results "base"
+  merge_results "head"
 
   log "Generating comparison report"
   node - "$RESULT_DIR/base.json" "$RESULT_DIR/head.json" "$THRESHOLD_PCT" "$RESULT_DIR/report.md" "$RESULT_DIR/report.json" >"$RESULT_DIR/compare.log" 2>&1 <<'NODE'
@@ -258,13 +460,17 @@ const scenarios = names.map((name) => {
   const base = baseMap.get(name);
   const head = headMap.get(name);
   const deltaPct = ((head.mean - base.mean) / base.mean) * 100;
+  const deltaBestPct = base.max > 0 ? ((head.max - base.max) / base.max) * 100 : deltaPct;
   const regression = deltaPct <= -thresholdPct;
   const improvement = deltaPct >= thresholdPct;
   return {
     name,
     baseMean: base.mean,
     headMean: head.mean,
+    baseMax: base.max,
+    headMax: head.max,
     deltaPct,
+    deltaBestPct,
     baseCiPct: base.ci95.marginPct,
     headCiPct: head.ci95.marginPct,
     status: regression ? "REGRESSION" : improvement ? "IMPROVEMENT" : "OK",
@@ -277,6 +483,8 @@ const report = {
   thresholdPct,
   baseCommit: baseRun.git?.commit,
   headCommit: headRun.git?.commit,
+  baseServerKind: baseRun.server?.kind || "unknown",
+  headServerKind: headRun.server?.kind || "unknown",
   regressions,
   pass: regressions.length === 0,
   scenarios,
@@ -292,12 +500,13 @@ lines.push(`- Generated: ${report.generatedAt}`);
 lines.push(`- Threshold: ${report.thresholdPct}% throughput drop => regression`);
 if (report.baseCommit) lines.push(`- Base commit: ${report.baseCommit}`);
 if (report.headCommit) lines.push(`- Head commit: ${report.headCommit}`);
+lines.push(`- Server: base=${report.baseServerKind}, head=${report.headServerKind}`);
 lines.push("");
-lines.push("| Scenario | Base req/s | Head req/s | Delta | Status | Base CI | Head CI |");
-lines.push("|---|---:|---:|---:|---|---:|---:|");
+lines.push("| Scenario | Base mean | Head mean | Delta | Best-of base | Best-of head | Delta (best) | Status | Base CI | Head CI |");
+lines.push("|---|---:|---:|---:|---:|---:|---:|---|---:|---:|");
 for (const row of scenarios) {
   lines.push(
-    `| ${row.name} | ${num(row.baseMean)} | ${num(row.headMean)} | ${pct(row.deltaPct)} | ${row.status} | ±${row.baseCiPct.toFixed(2)}% | ±${row.headCiPct.toFixed(2)}% |`,
+    `| ${row.name} | ${num(row.baseMean)} | ${num(row.headMean)} | ${pct(row.deltaPct)} | ${num(row.baseMax)} | ${num(row.headMax)} | ${pct(row.deltaBestPct)} | ${row.status} | ±${row.baseCiPct.toFixed(2)}% | ±${row.headCiPct.toFixed(2)}% |`,
   );
 }
 lines.push("");
