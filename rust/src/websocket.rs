@@ -6,9 +6,13 @@ use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::Mutex;
+use wreq::cookie::{CookieStore, Cookies};
+use wreq::header::OrigHeaderMap;
 use wreq::ws::WebSocket;
-use wreq::ws::message::Message;
+use wreq::ws::message::{CloseCode, CloseFrame, Message};
 use wreq_util::{Emulation, EmulationOS, EmulationOption};
+
+use crate::client::{get_session_cookie_jar, get_transport_client};
 
 // Global storage for WebSocket connections
 static WS_CONNECTIONS: LazyLock<DashMap<u64, Arc<WsConnection>>> = LazyLock::new(DashMap::new);
@@ -21,12 +25,25 @@ pub struct WebSocketOptions {
     pub emulation: Emulation,
     pub emulation_os: EmulationOS,
     pub headers: Vec<(String, String)>,
+    pub protocols: Vec<String>,
     pub proxy: Option<Arc<str>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct WebSocketUpgradeMetadata {
+    pub protocol: Option<String>,
+    pub extensions: Option<String>,
 }
 
 /// WebSocket connection wrapper
 pub struct WsConnection {
     sender: Arc<Mutex<futures_util::stream::SplitSink<WebSocket, Message>>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct WsClosePayload {
+    pub code: u16,
+    pub reason: String,
 }
 
 impl WsConnection {
@@ -57,10 +74,19 @@ impl WsConnection {
     }
 
     /// Close the WebSocket connection
-    pub async fn close(&self) -> Result<()> {
+    pub async fn close(&self, close_payload: Option<WsClosePayload>) -> Result<()> {
         let mut sender = self.sender.lock().await;
+
+        let close_message = match close_payload {
+            Some(payload) => Message::close(Some(CloseFrame {
+                code: CloseCode::from(payload.code),
+                reason: payload.reason.into(),
+            })),
+            None => Message::close(None),
+        };
+
         sender
-            .send(Message::close(None))
+            .send(close_message)
             .await
             .context("Failed to close WebSocket")?;
         Ok(())
@@ -90,7 +116,11 @@ pub fn remove_connection(id: u64) {
 /// Create WebSocket connection
 pub async fn connect_websocket(
     options: WebSocketOptions,
-) -> Result<(WsConnection, futures_util::stream::SplitStream<WebSocket>)> {
+) -> Result<(
+    WsConnection,
+    futures_util::stream::SplitStream<WebSocket>,
+    WebSocketUpgradeMetadata,
+)> {
     // Build client with emulation and proxy
     let emulation = EmulationOption::builder()
         .emulation(options.emulation)
@@ -109,19 +139,154 @@ pub async fn connect_websocket(
         .build()
         .context("Failed to build HTTP client")?;
 
+    connect_websocket_with_client(&client, &options.url, &options.headers, &options.protocols).await
+}
+
+/// Create WebSocket connection using a session's cookies and transport's TLS config.
+pub async fn connect_websocket_with_session(
+    session_id: &str,
+    transport_id: &str,
+    url: &str,
+    headers: &[(String, String)],
+    protocols: &[String],
+) -> Result<(
+    WsConnection,
+    futures_util::stream::SplitStream<WebSocket>,
+    WebSocketUpgradeMetadata,
+)> {
+    let client = get_transport_client(transport_id)?;
+    let cookie_jar = get_session_cookie_jar(session_id)?;
+
+    // Extract cookies from the jar for this URL and inject as a Cookie header
+    let uri: wreq::Uri = url.parse().context("Failed to parse WebSocket URL")?;
+    let cookies = cookie_jar.cookies(&uri);
+
+    let mut all_headers: Vec<(String, String)> = Vec::with_capacity(headers.len() + 1);
+    let mut cookie_segments: Vec<String> = Vec::new();
+
+    for (key, value) in headers.iter() {
+        if key.eq_ignore_ascii_case("cookie") {
+            if !value.trim().is_empty() {
+                cookie_segments.push(value.trim().to_string());
+            }
+            continue;
+        }
+
+        all_headers.push((key.clone(), value.clone()));
+    }
+
+    match cookies {
+        Cookies::Compressed(header_value) => {
+            if let Ok(cookie_str) = header_value.to_str() {
+                let trimmed = cookie_str.trim();
+                if !trimmed.is_empty() {
+                    cookie_segments.push(trimmed.to_string());
+                }
+            }
+        }
+        Cookies::Uncompressed(header_values) => {
+            for hv in header_values {
+                if let Ok(cookie_str) = hv.to_str() {
+                    let trimmed = cookie_str.trim();
+                    if !trimmed.is_empty() {
+                        cookie_segments.push(trimmed.to_string());
+                    }
+                }
+            }
+        }
+        Cookies::Empty => {}
+        _ => {}
+    }
+
+    if !cookie_segments.is_empty() {
+        all_headers.push(("Cookie".to_string(), cookie_segments.join("; ")));
+    }
+
+    connect_websocket_with_client(&client, url, &all_headers, protocols).await
+}
+
+/// Build an OrigHeaderMap with Title-Case header names for HTTP/1.1 WebSocket
+/// upgrade requests. Without this, wreq writes lowercase header names which
+/// Cloudflare's bot detection flags as non-browser traffic (403).
+fn build_ws_orig_headers(user_headers: &[(String, String)]) -> OrigHeaderMap {
+    let mut orig = OrigHeaderMap::new();
+
+    // Standard headers in browser-typical order with Title-Case.
+    // These cover both emulation-injected and wreq-internal WS headers.
+    for name in [
+        "Host",
+        "Connection",
+        "Pragma",
+        "Cache-Control",
+        "User-Agent",
+        "Upgrade",
+        "Origin",
+        "Sec-WebSocket-Version",
+        "Accept-Encoding",
+        "Accept-Language",
+        "Accept",
+        "Cookie",
+        "Sec-WebSocket-Key",
+        "Sec-WebSocket-Extensions",
+        "Sec-WebSocket-Protocol",
+        "Sec-Fetch-Dest",
+        "Sec-Fetch-Mode",
+        "Sec-Fetch-Site",
+        "Sec-Fetch-User",
+    ] {
+        orig.insert(name);
+    }
+
+    // User-provided headers with their original casing (overrides above if same name).
+    for (key, _) in user_headers {
+        orig.insert(key.clone());
+    }
+
+    orig
+}
+
+/// Internal: connect using an existing client.
+async fn connect_websocket_with_client(
+    client: &wreq::Client,
+    url: &str,
+    headers: &[(String, String)],
+    protocols: &[String],
+) -> Result<(
+    WsConnection,
+    futures_util::stream::SplitStream<WebSocket>,
+    WebSocketUpgradeMetadata,
+)> {
     // Create WebSocket request
-    let mut request = client.websocket(&options.url);
+    let mut request = client.websocket(url);
 
     // Apply custom headers
-    for (key, value) in options.headers.iter() {
+    for (key, value) in headers.iter() {
         request = request.header(key, value);
     }
+
+    if !protocols.is_empty() {
+        request = request.protocols(protocols.iter().cloned());
+    }
+
+    // Set original header casing for HTTP/1.1 (Cloudflare rejects lowercase)
+    request = request.orig_headers(build_ws_orig_headers(headers));
 
     // Send upgrade request
     let ws_response = request
         .send()
         .await
         .context("Failed to send WebSocket upgrade request")?;
+
+    let protocol = ws_response
+        .headers()
+        .get("sec-websocket-protocol")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_string());
+    let extensions = ws_response
+        .headers()
+        .get("sec-websocket-extensions")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_string());
 
     // Upgrade to WebSocket
     let websocket = ws_response.into_websocket().await?;
@@ -131,5 +296,12 @@ pub async fn connect_websocket(
 
     let connection = WsConnection::new(sender);
 
-    Ok((connection, receiver))
+    Ok((
+        connection,
+        receiver,
+        WebSocketUpgradeMetadata {
+            protocol,
+            extensions,
+        },
+    ))
 }

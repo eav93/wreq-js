@@ -677,3 +677,13 @@ mod tests {
         assert_ne!(connect_config, read_config);
     }
 }
+
+/// Get the cookie jar for a session. Used by websocket to share cookies.
+pub(crate) fn get_session_cookie_jar(session_id: &str) -> Result<Arc<Jar>> {
+    SESSION_MANAGER.jar_for(session_id)
+}
+
+/// Get the HTTP client for a transport. Used by websocket to share TLS config.
+pub(crate) fn get_transport_client(transport_id: &str) -> Result<Arc<wreq::Client>> {
+    TRANSPORT_MANAGER.get_transport(transport_id)
+}
