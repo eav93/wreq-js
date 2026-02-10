@@ -13,6 +13,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 use wreq::cookie::Jar;
+use wreq::header::OrigHeaderMap;
 use wreq::{Client as HttpClient, Method, Proxy, redirect};
 use wreq_util::{Emulation, EmulationOS, EmulationOption};
 
@@ -419,10 +420,15 @@ async fn make_request_inner(
     // Build request
     let mut request = client.request(request_method, &url);
 
-    // Apply custom headers
+    // Apply custom headers and preserve their original casing.
+    // Without this, wreq's browser emulation title-cases all header names
+    // (e.g. "X-ECG-Authorization-User" → "X-Ecg-Authorization-User").
+    let mut orig = OrigHeaderMap::new();
     for (key, value) in headers.iter() {
         request = request.header(key, value);
+        orig.insert(key.clone());
     }
+    request = request.orig_headers(orig);
 
     // Disable default headers if requested to prevent emulation headers from being appended
     if disable_default_headers {
