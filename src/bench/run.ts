@@ -3,7 +3,7 @@ import os from "node:os";
 import { performance } from "node:perf_hooks";
 import process from "node:process";
 import { createSession, createTransport, fetch as wreqFetch } from "../wreq-js.js";
-import { startLocalBenchServer } from "./local-bench-server.js";
+import { type ServerKind, startBenchServer } from "./local-bench-server.js";
 
 type ScenarioResult = {
   name: string;
@@ -33,7 +33,7 @@ type BenchRun = {
     warmup: number;
     concurrency: number;
   };
-  server: { baseUrl: string };
+  server: { baseUrl: string; kind: ServerKind };
   results: ScenarioResult[];
 };
 
@@ -349,7 +349,7 @@ async function runScenario(options: {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const server = await startLocalBenchServer();
+  const server = await startBenchServer();
 
   const commit = getGitCommit();
   const cpu0 = os.cpus()[0];
@@ -371,14 +371,14 @@ async function main() {
       warmup: args.warmup,
       concurrency: args.concurrency,
     },
-    server: { baseUrl: server.baseUrl },
+    server: { baseUrl: server.baseUrl, kind: server.kind },
     results: [],
   };
   if (commit) {
     meta.git = { commit };
   }
 
-  console.log(`Local server: ${server.baseUrl}`);
+  console.log(`Local server: ${server.baseUrl} (${server.kind})`);
   if (commit) {
     console.log(`Git commit: ${commit}`);
   }

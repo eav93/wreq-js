@@ -1,8 +1,15 @@
+import { type ChildProcess, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+export type ServerKind = "rust" | "node";
 
 export interface LocalBenchServer {
   baseUrl: string;
+  kind: ServerKind;
   close(): Promise<void>;
 }
 
@@ -14,6 +21,102 @@ type BenchRoute = {
 const SMALL_BODY = Buffer.from("OK", "utf8");
 const JSON_BODY = Buffer.from('{"ok":true,"message":"hello"}', "utf8");
 const BINARY_4K_BODY = Buffer.alloc(4096, 0xab);
+
+function findBenchServerBinary(): string | null {
+  const thisFile = fileURLToPath(import.meta.url);
+  const projectRoot = resolve(thisFile, "..", "..", "..");
+  const binary = resolve(projectRoot, "rust", "bench-server", "target", "release", "wreq-bench-server");
+  return existsSync(binary) ? binary : null;
+}
+
+function startRustBenchServer(): Promise<LocalBenchServer | null> {
+  const binary = findBenchServerBinary();
+  if (!binary) return Promise.resolve(null);
+
+  return new Promise<LocalBenchServer | null>((resolvePromise) => {
+    const serverCpu = process.env.BENCH_SERVER_CPU;
+    let proc: ChildProcess;
+
+    if (serverCpu && process.platform === "linux") {
+      proc = spawn("taskset", ["-c", serverCpu, binary], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } else {
+      proc = spawn(binary, [], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    }
+
+    let settled = false;
+    let stdoutBuf = "";
+
+    const timeout = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        proc.kill("SIGKILL");
+        resolvePromise(null);
+      }
+    }, 5000);
+
+    proc.on("error", () => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timeout);
+        resolvePromise(null);
+      }
+    });
+
+    proc.on("exit", () => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timeout);
+        resolvePromise(null);
+      }
+    });
+
+    proc.stdout?.on("data", (chunk: Buffer) => {
+      if (settled) return;
+      stdoutBuf += chunk.toString();
+      const newlineIdx = stdoutBuf.indexOf("\n");
+      if (newlineIdx === -1) return;
+
+      const portStr = stdoutBuf.slice(0, newlineIdx).trim();
+      const port = Number(portStr);
+      if (!Number.isFinite(port) || port <= 0) {
+        settled = true;
+        clearTimeout(timeout);
+        proc.kill("SIGKILL");
+        resolvePromise(null);
+        return;
+      }
+
+      settled = true;
+      clearTimeout(timeout);
+
+      const baseUrl = `http://127.0.0.1:${port}`;
+      const close = async () => {
+        proc.kill("SIGTERM");
+        await new Promise<void>((r) => {
+          const killTimeout = setTimeout(() => {
+            proc.kill("SIGKILL");
+          }, 2000);
+          proc.on("exit", () => {
+            clearTimeout(killTimeout);
+            r();
+          });
+        });
+      };
+
+      resolvePromise({ baseUrl, kind: "rust", close });
+    });
+  });
+}
+
+export async function startBenchServer(): Promise<LocalBenchServer> {
+  const rust = await startRustBenchServer();
+  if (rust) return rust;
+  return startLocalBenchServer();
+}
 
 export async function startLocalBenchServer(): Promise<LocalBenchServer> {
   const sockets = new Set<Socket>();
@@ -66,7 +169,7 @@ export async function startLocalBenchServer(): Promise<LocalBenchServer> {
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
   };
 
-  return { baseUrl, close };
+  return { baseUrl, kind: "node", close };
 
   async function handleRequest(req: IncomingMessage, res: ServerResponse) {
     const url = new URL(req.url ?? "/", baseUrl);
