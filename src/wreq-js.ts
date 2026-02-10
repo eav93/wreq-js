@@ -11,24 +11,53 @@ import type {
   EmulationOS,
   HeadersInit,
   HeaderTuple,
+  LegacySessionWebSocketOptions,
+  LegacyWebSocketOptions,
   NativeResponse,
   NativeWebSocketConnection,
   RequestOptions,
   SessionHandle,
+  SessionWebSocketOptions,
+  WebSocketBinaryType,
   WebSocketCloseEvent,
+  WebSocketErrorEvent,
+  WebSocketMessageEvent,
+  WebSocketOpenEvent,
   WebSocketOptions,
   RequestInit as WreqRequestInit,
 } from "./types.js";
 import { RequestError } from "./types.js";
 
+interface NativeWebSocketCloseEvent {
+  code: number;
+  reason: string;
+}
+
+interface NativeWebSocketCloseOptions {
+  code?: number;
+  reason?: string;
+}
+
 interface NativeWebSocketOptions {
   url: string;
   browser: BrowserProfile;
   os: EmulationOS;
-  headers: Record<string, string> | HeaderTuple[];
+  headers: HeaderTuple[];
+  protocols?: string[];
   proxy?: string;
   onMessage: (data: string | Buffer) => void;
-  onClose?: (event: WebSocketCloseEvent) => void;
+  onClose?: (event: NativeWebSocketCloseEvent) => void;
+  onError?: (error: string) => void;
+}
+
+interface NativeWebSocketSessionOptions {
+  url: string;
+  sessionId: string;
+  transportId: string;
+  headers: HeaderTuple[];
+  protocols?: string[];
+  onMessage: (data: string | Buffer) => void;
+  onClose?: (event: NativeWebSocketCloseEvent) => void;
   onError?: (error: string) => void;
 }
 
@@ -73,8 +102,9 @@ let nativeBinding: {
   cancelBody: (handleId: number) => void;
   getProfiles: () => string[];
   websocketConnect: (options: NativeWebSocketOptions) => Promise<NativeWebSocketConnection>;
+  websocketConnectSession: (options: NativeWebSocketSessionOptions) => Promise<NativeWebSocketConnection>;
   websocketSend: (ws: NativeWebSocketConnection, data: string | Buffer) => Promise<void>;
-  websocketClose: (ws: NativeWebSocketConnection) => Promise<void>;
+  websocketClose: (ws: NativeWebSocketConnection, options?: NativeWebSocketCloseOptions) => Promise<void>;
   createSession: (options: NativeSessionOptions) => string;
   clearSession: (sessionId: string) => void;
   dropSession: (sessionId: string) => void;
@@ -189,6 +219,7 @@ const bodyHandleFinalizer =
 
 const DEFAULT_BROWSER: BrowserProfile = "chrome_142";
 const DEFAULT_OS: EmulationOS = "macos";
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const SUPPORTED_OSES: readonly EmulationOS[] = ["windows", "macos", "linux", "android", "ios"];
 const UTF8_DECODER = new TextDecoder("utf-8");
 
@@ -216,6 +247,27 @@ type TransportResolution = {
   os?: EmulationOS;
   proxy?: string;
   insecure?: boolean;
+};
+
+type LegacyWebSocketCallbacks = {
+  onMessage?: (data: string | Buffer) => void;
+  onClose?: (event: WebSocketCloseEvent) => void;
+  onError?: (error: string) => void;
+};
+
+type WebSocketOpenDispatchMode = "automatic" | "deferred";
+
+type InternalWebSocketInit = {
+  readonly _internal: true;
+  url: string;
+  options: WebSocketOptions;
+  openDispatchMode: WebSocketOpenDispatchMode;
+  connect: (callbacks: {
+    onMessage: (data: string | Buffer) => void;
+    onClose: (event: NativeWebSocketCloseEvent) => void;
+    onError: (message: string) => void;
+  }) => Promise<NativeWebSocketConnection>;
+  legacyCallbacks: LegacyWebSocketCallbacks | undefined;
 };
 
 // Persistent sessions need globally-unique IDs; ephemeral ones only need a
@@ -431,35 +483,7 @@ export class Headers implements Iterable<[string, string]> {
 }
 
 function headersToTuples(init: HeadersInit): HeaderTuple[] {
-  // Fast paths for common high-throughput cases.
-  // Array inputs are not copied; callers that need isolation must copy themselves.
-  if (Array.isArray(init)) {
-    return init as HeaderTuple[];
-  }
-
-  if (init instanceof Headers) {
-    return init.toTuples();
-  }
-
-  const out: HeaderTuple[] = [];
-
-  if (isPlainObject(init)) {
-    return new Headers(init).toTuples();
-  }
-
-  if (isIterable<HeaderTuple>(init)) {
-    for (const tuple of init) {
-      if (!tuple) {
-        continue;
-      }
-      const [name, value] = tuple;
-      out.push([name, value]);
-    }
-
-    return out;
-  }
-
-  return out;
+  return new Headers(init).toTuples();
 }
 
 function hasHeaderName(tuples: HeaderTuple[] | undefined, name: string): boolean {
@@ -475,6 +499,29 @@ function hasHeaderName(tuples: HeaderTuple[] | undefined, name: string): boolean
   }
 
   return false;
+}
+
+function hasWebSocketProtocolHeader(headers: HeadersInit | undefined): boolean {
+  const protocolHeaderName = "Sec-WebSocket-Protocol";
+  if (!headers) {
+    return false;
+  }
+
+  return hasHeaderName(headersToTuples(headers), protocolHeaderName);
+}
+
+function assertNoManualWebSocketProtocolHeader(headers: HeadersInit | undefined): void {
+  if (hasWebSocketProtocolHeader(headers)) {
+    throw new RequestError("Do not set `Sec-WebSocket-Protocol` header manually; use the `protocols` option instead.");
+  }
+}
+
+function normalizeWebSocketProtocolList(protocols?: string | string[]): string[] | undefined {
+  if (protocols === undefined) {
+    return undefined;
+  }
+
+  return typeof protocols === "string" ? [protocols] : [...protocols];
 }
 
 function mergeHeaderTuples(
@@ -579,13 +626,17 @@ function createNativeBodyStream(handle: NativeBodyHandle): ReadableStream<Uint8A
 
 function wrapBodyStream(source: ReadableStream<Uint8Array>, onFirstUse: () => void): ReadableStream<Uint8Array> {
   let started = false;
-  const reader = source.getReader();
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       if (!started) {
         started = true;
         onFirstUse();
+      }
+
+      if (!reader) {
+        reader = source.getReader();
       }
 
       try {
@@ -602,6 +653,9 @@ function wrapBodyStream(source: ReadableStream<Uint8Array>, onFirstUse: () => vo
       }
     },
     cancel(reason) {
+      if (!reader) {
+        return source.cancel(reason);
+      }
       return reader.cancel(reason);
     },
   });
@@ -777,8 +831,24 @@ export class Response {
     return UTF8_DECODER.decode(bytes);
   }
 
+  async blob(): Promise<Blob> {
+    const bytes = await this.consumeBody();
+    const contentType = this.headers.get("content-type") ?? "";
+    return new Blob([bytes], contentType ? { type: contentType } : undefined);
+  }
+
+  async formData(): Promise<FormData> {
+    const bytes = await this.consumeBody();
+    const contentType = this.headers.get("content-type");
+    const response = new globalThis.Response(
+      bytes,
+      contentType ? { headers: { "content-type": contentType } } : undefined,
+    );
+    return response.formData();
+  }
+
   clone(): Response {
-    if (this.bodyUsed || this.bodyStream) {
+    if (this.bodyUsed) {
       throw new TypeError("Cannot clone a Response whose body is already used");
     }
 
@@ -934,7 +1004,7 @@ export class Session implements SessionHandle {
     return this.defaults;
   }
 
-  async fetch(input: string | URL, init?: WreqRequestInit): Promise<Response> {
+  async fetch(input: string | URL | Request, init?: WreqRequestInit): Promise<Response> {
     this.ensureActive();
     const config: WreqRequestInit = init ? { ...init, session: this } : { session: this };
     return fetch(input, config);
@@ -947,6 +1017,53 @@ export class Session implements SessionHandle {
     } catch (error) {
       throw new RequestError(String(error));
     }
+  }
+
+  /**
+   * Create a WebSocket connection that shares this session's cookies and TLS configuration.
+   *
+   * @param urlOrOptions - WebSocket URL or legacy options object
+   * @param options - Session WebSocket options
+   * @returns Promise that resolves to the WebSocket instance
+   */
+  async websocket(url: string | URL, options?: SessionWebSocketOptions): Promise<WebSocket>;
+  async websocket(options: LegacySessionWebSocketOptions): Promise<WebSocket>;
+  async websocket(
+    urlOrOptions: string | URL | LegacySessionWebSocketOptions,
+    options?: SessionWebSocketOptions,
+  ): Promise<WebSocket> {
+    this.ensureActive();
+
+    const normalized = normalizeSessionWebSocketArgs(urlOrOptions, options);
+    validateWebSocketProtocols(normalized.options.protocols);
+    assertNoManualWebSocketProtocolHeader(normalized.options.headers);
+    const protocols = normalizeWebSocketProtocolList(normalized.options.protocols);
+
+    const transportId = this.defaults.transportId;
+    if (!transportId) {
+      throw new RequestError(
+        "Session has no transport. Create the session with browser/os options or pass a transport to use session.websocket().",
+      );
+    }
+
+    return WebSocket._connectWithInit({
+      _internal: true,
+      url: normalized.url,
+      options: normalized.options,
+      openDispatchMode: "deferred",
+      connect: (callbacks) =>
+        nativeBinding.websocketConnectSession({
+          url: normalized.url,
+          sessionId: this.id,
+          transportId,
+          headers: headersToTuples(normalized.options.headers ?? {}),
+          ...(protocols && protocols.length > 0 && { protocols }),
+          onMessage: callbacks.onMessage,
+          onClose: callbacks.onClose,
+          onError: callbacks.onError,
+        }),
+      legacyCallbacks: normalized.legacyCallbacks,
+    });
   }
 
   async close(): Promise<void> {
@@ -1047,7 +1164,7 @@ function resolveTransportContext(config: WreqRequestInit, sessionDefaults?: Sess
       throw new RequestError("Transport has been closed");
     }
 
-    const hasProxy = Object.hasOwn(config as object, "proxy");
+    const hasProxy = config.proxy !== undefined;
     if (config.browser !== undefined || config.os !== undefined || hasProxy || config.insecure !== undefined) {
       throw new RequestError("`transport` cannot be combined with browser/os/proxy/insecure options");
     }
@@ -1180,7 +1297,7 @@ function setupAbort(signal: AbortSignal | null | undefined, cancelNative: () => 
 }
 
 function coerceUrlInput(input: string | URL): string {
-  if (typeof input !== "string") {
+  if (input instanceof URL) {
     return input.href;
   }
 
@@ -1199,6 +1316,73 @@ function coerceUrlInput(input: string | URL): string {
   }
 
   return trimmed;
+}
+
+type RequestLike = {
+  url: string;
+  method: string;
+  headers: globalThis.Headers;
+  signal: AbortSignal | null;
+  redirect: string;
+  bodyUsed: boolean;
+  body: ReadableStream<Uint8Array> | null;
+  arrayBuffer(): Promise<ArrayBuffer>;
+};
+
+function isRequestLike(input: unknown): input is RequestLike {
+  if (!input || typeof input !== "object") {
+    return false;
+  }
+
+  if (typeof Request !== "undefined" && input instanceof Request) {
+    return true;
+  }
+
+  const candidate = input as Partial<RequestLike>;
+  return (
+    typeof candidate.url === "string" &&
+    typeof candidate.method === "string" &&
+    typeof candidate.arrayBuffer === "function" &&
+    typeof candidate.redirect === "string"
+  );
+}
+
+async function resolveFetchArgs(
+  input: string | URL | RequestLike,
+  init?: WreqRequestInit,
+): Promise<{
+  url: string;
+  init: WreqRequestInit;
+}> {
+  if (!isRequestLike(input)) {
+    return { url: coerceUrlInput(input), init: init ?? {} };
+  }
+
+  const mergedInit: WreqRequestInit = init ? { ...init } : {};
+
+  if (mergedInit.method === undefined) {
+    mergedInit.method = input.method;
+  }
+  if (mergedInit.headers === undefined) {
+    mergedInit.headers = input.headers as unknown as HeadersInit;
+  }
+  if (
+    mergedInit.redirect === undefined &&
+    (input.redirect === "follow" || input.redirect === "manual" || input.redirect === "error")
+  ) {
+    mergedInit.redirect = input.redirect;
+  }
+  if (mergedInit.signal === undefined) {
+    mergedInit.signal = input.signal;
+  }
+  if (mergedInit.body === undefined && input.body !== null) {
+    if (input.bodyUsed) {
+      throw new TypeError("Request body is already used");
+    }
+    mergedInit.body = Buffer.from(await input.arrayBuffer());
+  }
+
+  return { url: coerceUrlInput(input.url), init: mergedInit };
 }
 
 function normalizeUrlForComparison(value: string): string | null {
@@ -1298,9 +1482,13 @@ function ensureBodyAllowed(method: string, body?: Buffer): void {
   }
 }
 
-function validateBrowserProfile(browser?: BrowserProfile): void {
-  if (!browser) {
+function validateBrowserProfile(browser?: BrowserProfile | string): void {
+  if (browser === undefined) {
     return;
+  }
+
+  if (typeof browser !== "string" || browser.trim().length === 0) {
+    throw new RequestError("Browser profile must not be empty");
   }
 
   if (!getProfileSet().has(browser)) {
@@ -1308,9 +1496,13 @@ function validateBrowserProfile(browser?: BrowserProfile): void {
   }
 }
 
-function validateOperatingSystem(os?: EmulationOS): void {
-  if (!os) {
+function validateOperatingSystem(os?: EmulationOS | string): void {
+  if (os === undefined) {
     return;
+  }
+
+  if (typeof os !== "string" || os.trim().length === 0) {
+    throw new RequestError("Operating system must not be empty");
   }
 
   if (!getOperatingSystemSet().has(os)) {
@@ -1423,20 +1615,20 @@ async function dispatchRequest(
 /**
  * Fetch-compatible entry point that adds browser impersonation controls.
  *
- * **Important:** The default fetch is isolated and non-persistent by design. Each request
- * uses a fresh connection with no shared state (cookies, TLS sessions). This prevents
- * TLS fingerprint leakage between requests.
+ * **Important:** The default fetch path is isolated and non-persistent by design.
+ * Each call uses an isolated request context, so cookies are not shared across calls.
+ * Connection and TLS reuse behavior is handled by the native layer.
  *
  * **Use {@link createSession} or {@link withSession} if you need:**
  * - Cookie persistence across requests
- * - TLS connection reuse for performance
- * - Shared connection state
+ * - Shared session defaults across requests
+ * - A single session context for multi-step flows
  *
  * **Concurrency:** The core is unthrottled by design. Callers are expected to implement
  * their own concurrency control (e.g., p-limit) if needed. Built-in throttling would
  * reduce performance for high-throughput workloads.
  *
- * @param input - Request URL (string or URL instance)
+ * @param input - Request URL (string or URL) or a Request object
  * @param init - Fetch-compatible init options
  *
  * @example
@@ -1451,9 +1643,10 @@ async function dispatchRequest(
  * });
  * ```
  */
-export async function fetch(input: string | URL, init?: WreqRequestInit): Promise<Response> {
-  const url = coerceUrlInput(input);
-  const config = init ?? {};
+export async function fetch(input: string | URL | Request, init?: WreqRequestInit): Promise<Response> {
+  const resolved = await resolveFetchArgs(input, init);
+  const url = resolved.url;
+  const config = resolved.init;
   const sessionContext = resolveSessionContext(config);
   const sessionDefaults = sessionContext.defaults;
 
@@ -1480,7 +1673,7 @@ export async function fetch(input: string | URL, init?: WreqRequestInit): Promis
   }
 
   const transport = resolveTransportContext(config, sessionDefaults);
-  const timeout = config.timeout ?? sessionDefaults?.timeout;
+  const timeout = config.timeout ?? sessionDefaults?.timeout ?? DEFAULT_REQUEST_TIMEOUT_MS;
 
   const requestOptions: NativeRequestOptions = {
     url,
@@ -1506,9 +1699,7 @@ export async function fetch(input: string | URL, init?: WreqRequestInit): Promis
     }
   }
 
-  if (timeout !== undefined) {
-    requestOptions.timeout = timeout;
-  }
+  requestOptions.timeout = timeout;
   if (config.redirect !== undefined) {
     requestOptions.redirect = config.redirect;
   }
@@ -1748,7 +1939,7 @@ function getOperatingSystemSet(): Set<string> {
 /**
  * Convenience helper for GET requests using {@link fetch}.
  */
-export async function get(url: string, init?: Omit<WreqRequestInit, "method">): Promise<Response> {
+export async function get(url: string | URL | Request, init?: Omit<WreqRequestInit, "method">): Promise<Response> {
   const config: WreqRequestInit = {};
   if (init) {
     Object.assign(config, init);
@@ -1761,7 +1952,7 @@ export async function get(url: string, init?: Omit<WreqRequestInit, "method">): 
  * Convenience helper for POST requests using {@link fetch}.
  */
 export async function post(
-  url: string,
+  url: string | URL | Request,
   body?: BodyInit | null,
   init?: Omit<WreqRequestInit, "method" | "body">,
 ): Promise<Response> {
@@ -1777,144 +1968,898 @@ export async function post(
   return fetch(url, config);
 }
 
+function normalizeWebSocketUrl(url: string | URL): string {
+  const normalized = String(url).trim();
+  if (!normalized) {
+    throw new RequestError("URL is required");
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized);
+  } catch (error) {
+    throw new RequestError(String(error));
+  }
+
+  if (parsed.hash) {
+    throw new RequestError("WebSocket URL must not include a hash fragment");
+  }
+
+  if (parsed.protocol === "http:") {
+    parsed.protocol = "ws:";
+  } else if (parsed.protocol === "https:") {
+    parsed.protocol = "wss:";
+  }
+
+  if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") {
+    throw new RequestError("expected a ws: or wss: url");
+  }
+
+  return parsed.toString();
+}
+
+function validateWebSocketProtocols(protocols?: string | string[]): void {
+  if (protocols === undefined) {
+    return;
+  }
+
+  const protocolList = typeof protocols === "string" ? [protocols] : protocols;
+  const seen = new Set<string>();
+  const validToken = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
+  for (const protocol of protocolList) {
+    if (typeof protocol !== "string" || protocol.length === 0) {
+      throw new RequestError("WebSocket protocol values must be non-empty strings");
+    }
+    if (!validToken.test(protocol)) {
+      throw new RequestError(`Invalid WebSocket protocol value: ${protocol}`);
+    }
+    if (seen.has(protocol)) {
+      throw new RequestError(`Duplicate WebSocket protocol: ${protocol}`);
+    }
+    seen.add(protocol);
+  }
+}
+
+function normalizeStandaloneWebSocketOptions(options?: Partial<WebSocketOptions>): WebSocketOptions {
+  const normalized: WebSocketOptions = {};
+  if (!options) {
+    return normalized;
+  }
+
+  if (options.browser !== undefined) {
+    normalized.browser = options.browser;
+  }
+  if (options.os !== undefined) {
+    normalized.os = options.os;
+  }
+  if (options.headers !== undefined) {
+    normalized.headers = options.headers;
+  }
+  if (options.proxy !== undefined) {
+    normalized.proxy = options.proxy;
+  }
+  if (options.protocols !== undefined) {
+    normalized.protocols = options.protocols;
+  }
+  if (options.binaryType !== undefined) {
+    if (options.binaryType !== "nodebuffer" && options.binaryType !== "arraybuffer" && options.binaryType !== "blob") {
+      throw new RequestError("binaryType must be one of: 'nodebuffer', 'arraybuffer', 'blob'");
+    }
+    normalized.binaryType = options.binaryType;
+  }
+
+  return normalized;
+}
+
+function normalizeSessionWebSocketOptions(options?: Partial<SessionWebSocketOptions>): SessionWebSocketOptions {
+  const normalized: SessionWebSocketOptions = {};
+  if (!options) {
+    return normalized;
+  }
+
+  const optionsWithOverrides = options as Partial<WebSocketOptions>;
+  if (optionsWithOverrides.browser !== undefined) {
+    throw new RequestError(
+      "`browser` is not supported in session.websocket(); the session controls browser emulation.",
+    );
+  }
+  if (optionsWithOverrides.os !== undefined) {
+    throw new RequestError("`os` is not supported in session.websocket(); the session controls OS emulation.");
+  }
+  if (optionsWithOverrides.proxy !== undefined) {
+    throw new RequestError("`proxy` is not supported in session.websocket(); the session transport controls proxying.");
+  }
+
+  if (options.headers !== undefined) {
+    normalized.headers = options.headers;
+  }
+  if (options.protocols !== undefined) {
+    normalized.protocols = options.protocols;
+  }
+  if (options.binaryType !== undefined) {
+    if (options.binaryType !== "nodebuffer" && options.binaryType !== "arraybuffer" && options.binaryType !== "blob") {
+      throw new RequestError("binaryType must be one of: 'nodebuffer', 'arraybuffer', 'blob'");
+    }
+    normalized.binaryType = options.binaryType;
+  }
+
+  return normalized;
+}
+
+function extractLegacyWebSocketCallbacks(options: unknown): LegacyWebSocketCallbacks | undefined {
+  if (!isPlainObject(options)) {
+    return undefined;
+  }
+
+  const maybeCallbacks = options as Partial<LegacyWebSocketCallbacks>;
+  const callbacks: LegacyWebSocketCallbacks = {};
+
+  if (typeof maybeCallbacks.onMessage === "function") {
+    callbacks.onMessage = maybeCallbacks.onMessage;
+  }
+  if (typeof maybeCallbacks.onClose === "function") {
+    callbacks.onClose = maybeCallbacks.onClose;
+  }
+  if (typeof maybeCallbacks.onError === "function") {
+    callbacks.onError = maybeCallbacks.onError;
+  }
+
+  return Object.keys(callbacks).length > 0 ? callbacks : undefined;
+}
+
+function normalizeWebSocketCloseOptions(code?: number, reason?: string): NativeWebSocketCloseOptions | undefined {
+  if (code === undefined && reason === undefined) {
+    return undefined;
+  }
+
+  if (code === undefined) {
+    throw new RequestError("A close code is required when providing a close reason");
+  }
+
+  if (!Number.isInteger(code)) {
+    throw new RequestError("Close code must be an integer");
+  }
+  if (code !== 1000 && (code < 3000 || code > 4999)) {
+    throw new RequestError("Close code must be 1000 or in range 3000-4999");
+  }
+
+  const normalizedReason = reason ?? "";
+  if (Buffer.byteLength(normalizedReason, "utf8") > 123) {
+    throw new RequestError("Close reason must be 123 bytes or fewer");
+  }
+
+  return {
+    code,
+    reason: normalizedReason,
+  };
+}
+
+type WebSocketAnyEvent = WebSocketOpenEvent | WebSocketMessageEvent | WebSocketCloseEvent | WebSocketErrorEvent;
+type WebSocketFunctionListener = (this: WebSocket, event: WebSocketAnyEvent) => void;
+type WebSocketObjectListener = { handleEvent: (event: WebSocketAnyEvent) => void };
+type WebSocketListener = WebSocketFunctionListener | WebSocketObjectListener;
+type WebSocketAddEventListenerOptions = boolean | { once?: boolean; signal?: AbortSignal | null };
+type WebSocketListenerType = "open" | "message" | "close" | "error";
+
+type WebSocketListenerDescriptor = {
+  listener: WebSocketListener;
+  order: number;
+  once: boolean;
+  abortSignal?: AbortSignal | null;
+  abortHandler?: () => void;
+};
+
+function isWebSocketListenerType(type: string): type is WebSocketListenerType {
+  return type === "open" || type === "message" || type === "close" || type === "error";
+}
+
 /**
- * WebSocket connection class
- *
- * @example
- * ```typescript
- * import { websocket } from 'wreq-js';
- *
- * const ws = await websocket({
- *   url: 'wss://echo.websocket.org',
- *   browser: 'chrome_142',
- *   onMessage: (data) => {
- *     console.log('Received:', data);
- *   },
- *   onClose: (event) => {
- *     console.log('Connection closed:', event.code, event.reason);
- *   },
- *   onError: (error) => {
- *     console.error('Error:', error);
- *   }
- * });
- *
- * // Send text message
- * await ws.send('Hello World');
- *
- * // Send binary message
- * await ws.send(Buffer.from([1, 2, 3]));
- *
- * // Close connection
- * await ws.close();
- * ```
+ * WHATWG-style WebSocket API with async connection establishment.
  */
 export class WebSocket {
-  private _connection: NativeWebSocketConnection;
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSING = 2;
+  static readonly CLOSED = 3;
+
+  readonly url: string;
+  protocol = "";
+  extensions = "";
+  readyState = WebSocket.CONNECTING;
+  private _binaryType: WebSocketBinaryType = "nodebuffer";
+  private _bufferedAmount = 0;
+
+  private _onopen: ((this: WebSocket, event: WebSocketOpenEvent) => void) | null = null;
+  private _onmessage: ((this: WebSocket, event: WebSocketMessageEvent) => void) | null = null;
+  private _onclose: ((this: WebSocket, event: WebSocketCloseEvent) => void) | null = null;
+  private _onerror: ((this: WebSocket, event: WebSocketErrorEvent) => void) | null = null;
+  private _onHandlerOrder = {
+    open: -1,
+    message: -1,
+    close: -1,
+    error: -1,
+  };
+  private _listenerOrderCounter = 0;
+
+  private readonly _listeners = {
+    open: new Map<WebSocketListener, WebSocketListenerDescriptor>(),
+    message: new Map<WebSocketListener, WebSocketListenerDescriptor>(),
+    close: new Map<WebSocketListener, WebSocketListenerDescriptor>(),
+    error: new Map<WebSocketListener, WebSocketListenerDescriptor>(),
+  };
+  private readonly _legacyCallbacks: LegacyWebSocketCallbacks | undefined;
+  private readonly _openDispatchMode: WebSocketOpenDispatchMode;
+  private _connection: NativeWebSocketConnection | undefined;
+  private _connectPromise!: Promise<void>;
+  private _closeOptions: NativeWebSocketCloseOptions | undefined;
   private _finalizerToken: NativeWebSocketConnection | undefined;
-  private _closed = false;
-  private _closing: Promise<void> | undefined;
+  private _openEventDispatched = false;
+  private _openEventQueued = false;
+  private _closeEventDispatched = false;
+  private _nativeCloseStarted = false;
+  private _pendingMessages: Array<string | Buffer> = [];
+  private _sendChain: Promise<void> = Promise.resolve();
 
-  constructor(connection: NativeWebSocketConnection) {
-    this._connection = connection;
+  constructor(init: InternalWebSocketInit);
+  constructor(url: string | URL, protocols?: string | string[]);
+  constructor(url: string | URL, protocols?: string | string[], options?: WebSocketOptions);
+  constructor(url: string | URL, options?: WebSocketOptions);
+  constructor(
+    urlOrInit: string | URL | InternalWebSocketInit,
+    protocolsOrOptions?: string | string[] | WebSocketOptions,
+    maybeOptions?: WebSocketOptions,
+  ) {
+    let init: InternalWebSocketInit;
+    if (isInternalWebSocketInit(urlOrInit)) {
+      init = urlOrInit;
+    } else {
+      init = WebSocket.buildStandaloneInit(urlOrInit, protocolsOrOptions, maybeOptions);
+    }
 
-    if (websocketFinalizer) {
-      this._finalizerToken = connection;
-      websocketFinalizer.register(this, connection, connection);
+    this.url = init.url;
+    this.binaryType = init.options.binaryType ?? "nodebuffer";
+    this._legacyCallbacks = init.legacyCallbacks;
+    this._openDispatchMode = init.openDispatchMode;
+    this._connectPromise = this.connect(init.connect);
+    void this._connectPromise.catch(() => undefined);
+  }
+
+  get binaryType(): WebSocketBinaryType {
+    return this._binaryType;
+  }
+
+  set binaryType(value: WebSocketBinaryType) {
+    if (value === "arraybuffer" || value === "blob" || value === "nodebuffer") {
+      this._binaryType = value;
     }
   }
 
-  /**
-   * Send a message (text or binary)
-   */
-  async send(data: string | Buffer | ArrayBuffer | ArrayBufferView): Promise<void> {
-    const payload =
-      typeof data === "string"
-        ? data
-        : Buffer.isBuffer(data)
-          ? data
-          : data instanceof ArrayBuffer
-            ? Buffer.from(data)
-            : ArrayBuffer.isView(data)
-              ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
-              : (() => {
-                  throw new TypeError("WebSocket data must be a string, Buffer, ArrayBuffer, or ArrayBufferView");
-                })();
+  get bufferedAmount(): number {
+    return this._bufferedAmount;
+  }
 
+  get onopen(): ((this: WebSocket, event: WebSocketOpenEvent) => void) | null {
+    return this._onopen;
+  }
+
+  set onopen(listener: ((this: WebSocket, event: WebSocketOpenEvent) => void) | null) {
+    this._onopen = listener;
+    this._onHandlerOrder.open = listener ? ++this._listenerOrderCounter : -1;
+  }
+
+  get onmessage(): ((this: WebSocket, event: WebSocketMessageEvent) => void) | null {
+    return this._onmessage;
+  }
+
+  set onmessage(listener: ((this: WebSocket, event: WebSocketMessageEvent) => void) | null) {
+    this._onmessage = listener;
+    this._onHandlerOrder.message = listener ? ++this._listenerOrderCounter : -1;
+  }
+
+  get onclose(): ((this: WebSocket, event: WebSocketCloseEvent) => void) | null {
+    return this._onclose;
+  }
+
+  set onclose(listener: ((this: WebSocket, event: WebSocketCloseEvent) => void) | null) {
+    this._onclose = listener;
+    this._onHandlerOrder.close = listener ? ++this._listenerOrderCounter : -1;
+  }
+
+  get onerror(): ((this: WebSocket, event: WebSocketErrorEvent) => void) | null {
+    return this._onerror;
+  }
+
+  set onerror(listener: ((this: WebSocket, event: WebSocketErrorEvent) => void) | null) {
+    this._onerror = listener;
+    this._onHandlerOrder.error = listener ? ++this._listenerOrderCounter : -1;
+  }
+
+  static async _connectWithInit(init: InternalWebSocketInit): Promise<WebSocket> {
+    const ws = new WebSocket(init);
+    await ws._waitUntilConnected();
+    ws.scheduleOpenEventAfterAwait();
+    return ws;
+  }
+
+  private static buildStandaloneInit(
+    url: string | URL,
+    protocolsOrOptions?: string | string[] | WebSocketOptions,
+    maybeOptions?: WebSocketOptions,
+  ): InternalWebSocketInit {
+    const optionsCandidate =
+      typeof protocolsOrOptions === "string" || Array.isArray(protocolsOrOptions)
+        ? maybeOptions
+        : (protocolsOrOptions ?? maybeOptions);
+    const normalizedOptions = normalizeStandaloneWebSocketOptions(optionsCandidate);
+    validateWebSocketProtocols(
+      typeof protocolsOrOptions === "string" || Array.isArray(protocolsOrOptions)
+        ? protocolsOrOptions
+        : normalizedOptions.protocols,
+    );
+    assertNoManualWebSocketProtocolHeader(normalizedOptions.headers);
+    validateBrowserProfile(normalizedOptions.browser);
+    const os = normalizedOptions.os ?? DEFAULT_OS;
+    validateOperatingSystem(os);
+    const browser = normalizedOptions.browser ?? DEFAULT_BROWSER;
+    const protocols = normalizeWebSocketProtocolList(
+      typeof protocolsOrOptions === "string" || Array.isArray(protocolsOrOptions)
+        ? protocolsOrOptions
+        : normalizedOptions.protocols,
+    );
+
+    return {
+      _internal: true,
+      url: normalizeWebSocketUrl(url),
+      options: normalizedOptions,
+      openDispatchMode: "automatic",
+      connect: (callbacks) =>
+        nativeBinding.websocketConnect({
+          url: normalizeWebSocketUrl(url),
+          browser,
+          os,
+          headers: headersToTuples(normalizedOptions.headers ?? {}),
+          ...(protocols && protocols.length > 0 && { protocols }),
+          ...(normalizedOptions.proxy !== undefined && { proxy: normalizedOptions.proxy }),
+          onMessage: callbacks.onMessage,
+          onClose: callbacks.onClose,
+          onError: callbacks.onError,
+        }),
+      legacyCallbacks: extractLegacyWebSocketCallbacks(optionsCandidate),
+    };
+  }
+
+  private async connect(
+    connectFn: (callbacks: {
+      onMessage: (data: string | Buffer) => void;
+      onClose: (event: NativeWebSocketCloseEvent) => void;
+      onError: (message: string) => void;
+    }) => Promise<NativeWebSocketConnection>,
+  ): Promise<void> {
     try {
-      await nativeBinding.websocketSend(this._connection, payload);
+      const connection = await connectFn({
+        onMessage: (data) => {
+          this.handleNativeMessage(data);
+        },
+        onClose: (event) => {
+          this.handleNativeClose(event);
+        },
+        onError: (message) => {
+          this.handleNativeError(message);
+        },
+      });
+
+      this._connection = connection;
+      this.protocol = connection.protocol ?? "";
+      this.extensions = connection.extensions ?? "";
+      if (websocketFinalizer) {
+        this._finalizerToken = connection;
+        websocketFinalizer.register(this, connection, connection);
+      }
+
+      if (this.readyState === WebSocket.CLOSING) {
+        this.startNativeClose();
+        return;
+      }
+
+      this.readyState = WebSocket.OPEN;
+      if (this._openDispatchMode === "automatic") {
+        this.scheduleOpenEventAfterConnect();
+      }
     } catch (error) {
+      this.handleNativeError(String(error));
+      this.finalizeClosed({ code: 1006, reason: "" }, false);
       throw new RequestError(String(error));
     }
   }
 
-  /**
-   * Close the WebSocket connection
-   */
-  async close(): Promise<void> {
-    if (this._closed) {
+  private _waitUntilConnected(): Promise<void> {
+    return this._connectPromise;
+  }
+
+  private scheduleOpenEventAfterConnect(): void {
+    this.scheduleOpenEventWithDepth(2);
+  }
+
+  private scheduleOpenEventAfterAwait(): void {
+    this.scheduleOpenEventWithDepth(3);
+  }
+
+  private scheduleOpenEventWithDepth(depth: number): void {
+    if (this._openEventDispatched || this._openEventQueued || this.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    this._openEventQueued = true;
+
+    const queue = (remaining: number) => {
+      if (remaining === 0) {
+        this._openEventQueued = false;
+        if (this._openEventDispatched || this.readyState !== WebSocket.OPEN) {
+          return;
+        }
+        this._openEventDispatched = true;
+        this.dispatchOpenEvent();
+        return;
+      }
+
+      queueMicrotask(() => {
+        queue(remaining - 1);
+      });
+    };
+
+    queue(depth);
+  }
+
+  private releaseConnectionTracking(): void {
+    if (!this._finalizerToken || !websocketFinalizer) {
+      return;
+    }
+    websocketFinalizer.unregister(this._finalizerToken);
+    this._finalizerToken = undefined;
+  }
+
+  private toMessageEventData(data: string | Buffer): string | Buffer | ArrayBuffer | Blob {
+    if (typeof data === "string") {
+      return data;
+    }
+    if (this._binaryType === "arraybuffer") {
+      const arrayBuffer = new ArrayBuffer(data.byteLength);
+      new Uint8Array(arrayBuffer).set(data);
+      return arrayBuffer;
+    }
+    if (this._binaryType === "blob") {
+      return new Blob([data]);
+    }
+    return data;
+  }
+
+  private invokeListener(listener: WebSocketListener, event: WebSocketAnyEvent): void {
+    try {
+      if (typeof listener === "function") {
+        listener.call(this, event);
+      } else {
+        listener.handleEvent(event);
+      }
+    } catch {
+      // Event listener errors should not break native callback dispatch.
+    }
+  }
+
+  private createBaseEvent<TType extends WebSocketAnyEvent["type"]>(type: TType) {
+    return {
+      type,
+      isTrusted: false as const,
+      timeStamp: Date.now(),
+      target: this,
+      currentTarget: this,
+    };
+  }
+
+  private getOnHandler(type: WebSocketListenerType): WebSocketFunctionListener | null {
+    switch (type) {
+      case "open":
+        return this._onopen as WebSocketFunctionListener | null;
+      case "message":
+        return this._onmessage as WebSocketFunctionListener | null;
+      case "close":
+        return this._onclose as WebSocketFunctionListener | null;
+      case "error":
+        return this._onerror as WebSocketFunctionListener | null;
+      default:
+        return null;
+    }
+  }
+
+  private getOnHandlerOrder(type: WebSocketListenerType): number {
+    return this._onHandlerOrder[type];
+  }
+
+  private getListenerMap(type: WebSocketListenerType): Map<WebSocketListener, WebSocketListenerDescriptor> {
+    return this._listeners[type];
+  }
+
+  private dispatchEvent(type: WebSocketListenerType, event: WebSocketAnyEvent): void {
+    const listenerMap = this.getListenerMap(type);
+    const onHandler = this.getOnHandler(type);
+    if (listenerMap.size === 0 && !onHandler) {
       return;
     }
 
-    if (this._closing) {
-      return this._closing;
+    const ordered: Array<{ order: number; listener: WebSocketListener; once: boolean }> = [];
+    for (const descriptor of listenerMap.values()) {
+      ordered.push({
+        order: descriptor.order,
+        listener: descriptor.listener,
+        once: descriptor.once,
+      });
     }
 
-    this._closing = (async () => {
-      try {
-        await nativeBinding.websocketClose(this._connection);
-        this._closed = true;
+    if (onHandler) {
+      ordered.push({
+        order: this.getOnHandlerOrder(type),
+        listener: onHandler,
+        once: false,
+      });
+    }
 
-        if (this._finalizerToken && websocketFinalizer) {
-          websocketFinalizer.unregister(this._finalizerToken);
-          this._finalizerToken = undefined;
-        }
-      } catch (error) {
-        throw new RequestError(String(error));
-      } finally {
-        this._closing = undefined;
+    ordered.sort((a, b) => a.order - b.order);
+
+    for (const entry of ordered) {
+      if (entry.once) {
+        this.removeEventListener(type, entry.listener);
       }
-    })();
+      this.invokeListener(entry.listener, event);
+    }
+  }
 
-    return this._closing;
+  private dispatchOpenEvent(): void {
+    const event: WebSocketOpenEvent = this.createBaseEvent("open");
+    this.dispatchEvent("open", event);
+    if (!this._closeEventDispatched && this._pendingMessages.length > 0) {
+      const pending = this._pendingMessages;
+      this._pendingMessages = [];
+      for (const data of pending) {
+        this.dispatchMessageEvent(this.toMessageEventData(data));
+      }
+    }
+  }
+
+  private dispatchMessageEvent(data: string | Buffer | ArrayBuffer | Blob): void {
+    const event: WebSocketMessageEvent = {
+      ...this.createBaseEvent("message"),
+      data,
+    };
+    this.dispatchEvent("message", event);
+  }
+
+  private dispatchCloseEvent(event: WebSocketCloseEvent): void {
+    this.dispatchEvent("close", event);
+  }
+
+  private dispatchErrorEvent(message?: string): void {
+    const event: WebSocketErrorEvent = {
+      ...this.createBaseEvent("error"),
+      ...(message !== undefined && { message }),
+    };
+    this.dispatchEvent("error", event);
+  }
+
+  private handleNativeMessage(data: string | Buffer): void {
+    if (this._closeEventDispatched) {
+      return;
+    }
+
+    this._legacyCallbacks?.onMessage?.(data);
+    if (!this._openEventDispatched && this.readyState === WebSocket.OPEN) {
+      this._pendingMessages.push(data);
+      return;
+    }
+    this.dispatchMessageEvent(this.toMessageEventData(data));
+  }
+
+  private handleNativeError(message: string): void {
+    this._legacyCallbacks?.onError?.(message);
+    this.dispatchErrorEvent(message);
+  }
+
+  private handleNativeClose(event: NativeWebSocketCloseEvent): void {
+    const wasClean = this.readyState === WebSocket.CLOSING || event.code === 1000;
+    this.finalizeClosed(event, wasClean);
+  }
+
+  private finalizeClosed(event: NativeWebSocketCloseEvent, wasClean: boolean): void {
+    if (this._closeEventDispatched) {
+      return;
+    }
+
+    this.readyState = WebSocket.CLOSED;
+    this._closeEventDispatched = true;
+    this._pendingMessages = [];
+    this.releaseConnectionTracking();
+
+    const closeEvent: WebSocketCloseEvent = {
+      ...this.createBaseEvent("close"),
+      code: event.code,
+      reason: event.reason,
+      wasClean,
+    };
+
+    this._legacyCallbacks?.onClose?.(closeEvent);
+    this.dispatchCloseEvent(closeEvent);
+  }
+
+  private startNativeClose(): void {
+    if (this._nativeCloseStarted || !this._connection) {
+      return;
+    }
+    this._nativeCloseStarted = true;
+    const connection = this._connection;
+    const closeOptions = this._closeOptions;
+
+    void nativeBinding.websocketClose(connection, closeOptions).catch((error) => {
+      this.handleNativeError(String(error));
+      this.finalizeClosed({ code: 1006, reason: "" }, false);
+    });
+  }
+
+  addEventListener(
+    type: "open",
+    listener: ((event: WebSocketOpenEvent) => void) | null,
+    options?: WebSocketAddEventListenerOptions,
+  ): void;
+  addEventListener(
+    type: "message",
+    listener: ((event: WebSocketMessageEvent) => void) | null,
+    options?: WebSocketAddEventListenerOptions,
+  ): void;
+  addEventListener(
+    type: "close",
+    listener: ((event: WebSocketCloseEvent) => void) | null,
+    options?: WebSocketAddEventListenerOptions,
+  ): void;
+  addEventListener(
+    type: "error",
+    listener: ((event: WebSocketErrorEvent) => void) | null,
+    options?: WebSocketAddEventListenerOptions,
+  ): void;
+  addEventListener(type: string, listener: unknown, options?: WebSocketAddEventListenerOptions): void;
+  addEventListener(type: string, listener: unknown, options?: WebSocketAddEventListenerOptions): void {
+    if (!listener || !isWebSocketListenerType(type)) {
+      return;
+    }
+
+    const normalizedListener = listener as WebSocketListener;
+    if (
+      typeof normalizedListener !== "function" &&
+      (typeof normalizedListener !== "object" ||
+        normalizedListener === null ||
+        typeof normalizedListener.handleEvent !== "function")
+    ) {
+      return;
+    }
+    const listenerMap = this.getListenerMap(type);
+    if (listenerMap.has(normalizedListener)) {
+      return;
+    }
+
+    const parsedOptions = typeof options === "boolean" ? {} : (options ?? {});
+    const once = parsedOptions.once === true;
+    const signal = parsedOptions.signal;
+
+    if (signal?.aborted) {
+      return;
+    }
+
+    const descriptor: WebSocketListenerDescriptor = {
+      listener: normalizedListener,
+      order: ++this._listenerOrderCounter,
+      once,
+    };
+
+    if (signal) {
+      const onAbort = () => {
+        this.removeEventListener(type, normalizedListener);
+      };
+      descriptor.abortSignal = signal;
+      descriptor.abortHandler = onAbort;
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+
+    listenerMap.set(normalizedListener, descriptor);
+  }
+
+  removeEventListener(type: "open", listener: ((event: WebSocketOpenEvent) => void) | null): void;
+  removeEventListener(type: "message", listener: ((event: WebSocketMessageEvent) => void) | null): void;
+  removeEventListener(type: "close", listener: ((event: WebSocketCloseEvent) => void) | null): void;
+  removeEventListener(type: "error", listener: ((event: WebSocketErrorEvent) => void) | null): void;
+  removeEventListener(type: string, listener: unknown): void;
+  removeEventListener(type: string, listener: unknown): void {
+    if (!listener || !isWebSocketListenerType(type)) {
+      return;
+    }
+
+    const normalizedListener = listener as WebSocketListener;
+    if (typeof normalizedListener !== "function" && typeof normalizedListener !== "object") {
+      return;
+    }
+    const listenerMap = this.getListenerMap(type);
+    const descriptor = listenerMap.get(normalizedListener);
+    if (!descriptor) {
+      return;
+    }
+
+    if (descriptor.abortSignal && descriptor.abortHandler) {
+      descriptor.abortSignal.removeEventListener("abort", descriptor.abortHandler);
+    }
+
+    listenerMap.delete(normalizedListener);
+  }
+
+  private getSendByteLength(data: string | Buffer | ArrayBuffer | ArrayBufferView | Blob): number {
+    if (typeof data === "string") {
+      return Buffer.byteLength(data);
+    }
+    if (Buffer.isBuffer(data)) {
+      return data.byteLength;
+    }
+    if (data instanceof ArrayBuffer) {
+      return data.byteLength;
+    }
+    if (ArrayBuffer.isView(data)) {
+      return data.byteLength;
+    }
+    if (typeof Blob !== "undefined" && data instanceof Blob) {
+      return data.size;
+    }
+
+    throw new TypeError("WebSocket data must be a string, Buffer, ArrayBuffer, ArrayBufferView, or Blob");
+  }
+
+  private async normalizeSendPayload(
+    data: string | Buffer | ArrayBuffer | ArrayBufferView | Blob,
+  ): Promise<string | Buffer> {
+    if (typeof data === "string") {
+      return data;
+    }
+    if (Buffer.isBuffer(data)) {
+      return data;
+    }
+    if (data instanceof ArrayBuffer) {
+      return Buffer.from(data);
+    }
+    if (ArrayBuffer.isView(data)) {
+      return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+    }
+    if (typeof Blob !== "undefined" && data instanceof Blob) {
+      return Buffer.from(await data.arrayBuffer());
+    }
+
+    throw new TypeError("WebSocket data must be a string, Buffer, ArrayBuffer, ArrayBufferView, or Blob");
+  }
+
+  send(data: string | Buffer | ArrayBuffer | ArrayBufferView | Blob): void {
+    if (this.readyState !== WebSocket.OPEN || !this._connection) {
+      throw new RequestError("WebSocket is not open");
+    }
+
+    const queuedBytes = this.getSendByteLength(data);
+    const connection = this._connection;
+    this._bufferedAmount += queuedBytes;
+    const sendTask = async () => {
+      try {
+        const payload = await this.normalizeSendPayload(data);
+        await nativeBinding.websocketSend(connection, payload);
+      } catch (error) {
+        this.handleNativeError(String(error));
+        this.finalizeClosed({ code: 1006, reason: "" }, false);
+      } finally {
+        this._bufferedAmount = Math.max(0, this._bufferedAmount - queuedBytes);
+      }
+    };
+    this._sendChain = this._sendChain.then(sendTask, sendTask);
+  }
+
+  close(code?: number, reason?: string): void {
+    if (this.readyState === WebSocket.CLOSING || this.readyState === WebSocket.CLOSED) {
+      return;
+    }
+
+    this._closeOptions = normalizeWebSocketCloseOptions(code, reason);
+    this.readyState = WebSocket.CLOSING;
+    this.startNativeClose();
   }
 }
 
+function isInternalWebSocketInit(value: unknown): value is InternalWebSocketInit {
+  if (!isPlainObject(value)) {
+    return false;
+  }
+
+  const candidate = value as Partial<InternalWebSocketInit>;
+  return candidate._internal === true && typeof candidate.url === "string" && typeof candidate.connect === "function";
+}
+
+function normalizeStandaloneWebSocketArgs(
+  urlOrOptions: string | URL | LegacyWebSocketOptions,
+  options?: WebSocketOptions,
+): { url: string; options: WebSocketOptions; legacyCallbacks: LegacyWebSocketCallbacks | undefined } {
+  if (typeof urlOrOptions === "string" || urlOrOptions instanceof URL) {
+    const normalizedOptions = normalizeStandaloneWebSocketOptions(options);
+    return {
+      url: normalizeWebSocketUrl(urlOrOptions),
+      options: normalizedOptions,
+      legacyCallbacks: extractLegacyWebSocketCallbacks(options),
+    };
+  }
+
+  const legacy = urlOrOptions;
+  const normalizedOptions = normalizeStandaloneWebSocketOptions(legacy);
+  return {
+    url: normalizeWebSocketUrl(legacy.url),
+    options: normalizedOptions,
+    legacyCallbacks: extractLegacyWebSocketCallbacks(legacy),
+  };
+}
+
+function normalizeSessionWebSocketArgs(
+  urlOrOptions: string | URL | LegacySessionWebSocketOptions,
+  options?: SessionWebSocketOptions,
+): { url: string; options: SessionWebSocketOptions; legacyCallbacks: LegacyWebSocketCallbacks | undefined } {
+  if (typeof urlOrOptions === "string" || urlOrOptions instanceof URL) {
+    const normalizedOptions = normalizeSessionWebSocketOptions(options);
+    return {
+      url: normalizeWebSocketUrl(urlOrOptions),
+      options: normalizedOptions,
+      legacyCallbacks: extractLegacyWebSocketCallbacks(options),
+    };
+  }
+
+  const legacy = urlOrOptions;
+  const normalizedOptions = normalizeSessionWebSocketOptions(legacy);
+  return {
+    url: normalizeWebSocketUrl(legacy.url),
+    options: normalizedOptions,
+    legacyCallbacks: extractLegacyWebSocketCallbacks(legacy),
+  };
+}
+
 /**
- * Create a WebSocket connection with browser impersonation
- *
- * @param options - WebSocket options
- * @returns Promise that resolves to the WebSocket instance
+ * Create a WebSocket connection with browser impersonation.
  */
-export async function websocket(options: WebSocketOptions): Promise<WebSocket> {
-  if (!options.url) {
-    throw new RequestError("URL is required");
-  }
-
-  if (!options.onMessage) {
-    throw new RequestError("onMessage callback is required");
-  }
-
-  validateBrowserProfile(options.browser);
-  const os = options.os ?? DEFAULT_OS;
+export async function websocket(url: string | URL, options?: WebSocketOptions): Promise<WebSocket>;
+export async function websocket(options: LegacyWebSocketOptions): Promise<WebSocket>;
+export async function websocket(
+  urlOrOptions: string | URL | LegacyWebSocketOptions,
+  options?: WebSocketOptions,
+): Promise<WebSocket> {
+  const normalized = normalizeStandaloneWebSocketArgs(urlOrOptions, options);
+  validateWebSocketProtocols(normalized.options.protocols);
+  assertNoManualWebSocketProtocolHeader(normalized.options.headers);
+  validateBrowserProfile(normalized.options.browser);
+  const os = normalized.options.os ?? DEFAULT_OS;
   validateOperatingSystem(os);
-  const browser = options.browser ?? DEFAULT_BROWSER;
+  const browser = normalized.options.browser ?? DEFAULT_BROWSER;
+  const protocols = normalizeWebSocketProtocolList(normalized.options.protocols);
 
-  try {
-    const connection = await nativeBinding.websocketConnect({
-      url: options.url,
-      browser,
-      os,
-      headers: options.headers ?? {},
-      ...(options.proxy !== undefined && { proxy: options.proxy }),
-      onMessage: options.onMessage,
-      ...(options.onClose !== undefined && { onClose: options.onClose }),
-      ...(options.onError !== undefined && { onError: options.onError }),
-    });
-
-    return new WebSocket(connection);
-  } catch (error) {
-    throw new RequestError(String(error));
-  }
+  return WebSocket._connectWithInit({
+    _internal: true,
+    url: normalized.url,
+    options: normalized.options,
+    openDispatchMode: "deferred",
+    connect: (callbacks) =>
+      nativeBinding.websocketConnect({
+        url: normalized.url,
+        browser,
+        os,
+        headers: headersToTuples(normalized.options.headers ?? {}),
+        ...(protocols && protocols.length > 0 && { protocols }),
+        ...(normalized.options.proxy !== undefined && { proxy: normalized.options.proxy }),
+        onMessage: callbacks.onMessage,
+        onClose: callbacks.onClose,
+        onError: callbacks.onError,
+      }),
+    legacyCallbacks: normalized.legacyCallbacks,
+  });
 }
 
 export type {
@@ -1928,6 +2873,13 @@ export type {
   RequestInit,
   RequestOptions,
   SessionHandle,
+  SessionWebSocketOptions,
+  WebSocketBinaryType,
+  WebSocketCloseEvent,
+  WebSocketErrorEvent,
+  WebSocketEventType,
+  WebSocketMessageEvent,
+  WebSocketOpenEvent,
   WebSocketOptions,
 } from "./types.js";
 
@@ -1949,4 +2901,5 @@ export default {
   Response,
   Transport,
   Session,
+  RequestError,
 };

@@ -1,6 +1,6 @@
 // Import and re-export the auto-generated BrowserProfile and EmulationOS types
 import type { BrowserProfile, EmulationOS } from "./generated-types.js";
-import type { Session, Transport } from "./wreq-js.js";
+import type { Session, Transport, WebSocket } from "./wreq-js.js";
 export type { BrowserProfile, EmulationOS };
 
 /**
@@ -74,7 +74,41 @@ export type BodyInit = string | ArrayBuffer | ArrayBufferView | URLSearchParams 
 /**
  * Details about why a WebSocket connection closed.
  */
+export type WebSocketBinaryType = "nodebuffer" | "arraybuffer" | "blob";
+
+export type WebSocketEventType = "open" | "message" | "close" | "error";
+
+export interface WebSocketOpenEvent {
+  type: "open";
+  isTrusted: false;
+  timeStamp: number;
+  target: WebSocket;
+  currentTarget: WebSocket;
+}
+
+export interface WebSocketMessageEvent {
+  type: "message";
+  isTrusted: false;
+  timeStamp: number;
+  data: string | Buffer | ArrayBuffer | Blob;
+  target: WebSocket;
+  currentTarget: WebSocket;
+}
+
+export interface WebSocketErrorEvent {
+  type: "error";
+  isTrusted: false;
+  timeStamp: number;
+  message?: string;
+  target: WebSocket;
+  currentTarget: WebSocket;
+}
+
 export interface WebSocketCloseEvent {
+  type: "close";
+  isTrusted: false;
+  timeStamp: number;
+
   /**
    * WebSocket close status code (RFC 6455).
    */
@@ -84,11 +118,15 @@ export interface WebSocketCloseEvent {
    * UTF-8 close reason sent by the peer.
    */
   reason: string;
+
+  wasClean: boolean;
+  target: WebSocket;
+  currentTarget: WebSocket;
 }
 
 /**
- * Options for configuring a fetch request. Compatible with the standard Fetch API
- * with additional wreq-specific extensions for browser impersonation, proxies, and timeouts.
+ * Options for configuring a fetch style request with wreq-specific extensions
+ * for browser impersonation, proxies, sessions, and timeouts.
  *
  * @example
  * ```typescript
@@ -139,7 +177,7 @@ export interface RequestInit {
 
   /**
    * Browser profile to impersonate for this request.
-   * Automatically applies browser-specific headers, TLS fingerprints, and HTTP/2 settings.
+   * Applies browser profile behavior handled by the native layer.
    * Ignored when `transport` is provided.
    * @default 'chrome_142'
    */
@@ -147,7 +185,7 @@ export interface RequestInit {
 
   /**
    * Operating system to emulate for this request.
-   * Influences platform-specific headers and TLS fingerprints.
+   * Influences platform-specific behavior handled by the native layer.
    * Ignored when `transport` is provided.
    * @default 'macos'
    */
@@ -155,14 +193,15 @@ export interface RequestInit {
 
   /**
    * Proxy URL to route the request through (e.g., 'http://proxy.example.com:8080').
-   * Supports HTTP and SOCKS5 proxies.
+   * Proxy support depends on the native layer and proxy scheme.
    * Ignored when `transport` is provided.
    */
   proxy?: string;
 
   /**
    * Request timeout in milliseconds. If the request takes longer than this value,
-   * it will be aborted. No timeout is applied by default.
+   * it will be aborted.
+   * @default 30000
    */
   timeout?: number;
 
@@ -225,21 +264,15 @@ export interface CreateSessionOptions {
 
   /**
    * Browser profile to bind to this session. Defaults to 'chrome_142'.
-   *
-   * @deprecated Use {@link createTransport} and pass the transport to requests instead.
    */
   browser?: BrowserProfile;
 
   /**
    * Operating system to bind to this session. Defaults to 'macos'.
-   *
-   * @deprecated Use {@link createTransport} and pass the transport to requests instead.
    */
   os?: EmulationOS;
   /**
    * Optional proxy for every request made through the session.
-   *
-   * @deprecated Use {@link createTransport} and pass the transport to requests instead.
    */
   proxy?: string;
   /**
@@ -251,8 +284,6 @@ export interface CreateSessionOptions {
   /**
    * Disable HTTPS certificate verification. When enabled, self-signed and invalid
    * certificates will be accepted for all requests made through this session.
-   *
-   * @deprecated Use {@link createTransport} and pass the transport to requests instead.
    *
    * # Warning
    *
@@ -345,7 +376,7 @@ export interface RequestOptions {
 
   /**
    * Browser profile to impersonate.
-   * Automatically applies browser-specific headers, TLS fingerprints, and HTTP/2 settings.
+   * Applies browser profile behavior handled by the native layer.
    * @default 'chrome_142'
    */
   browser?: BrowserProfile;
@@ -371,7 +402,7 @@ export interface RequestOptions {
   /**
    * Request body data (for POST, PUT, PATCH requests).
    */
-  body?: Buffer;
+  body?: BodyInit | null;
 
   /**
    * Transport instance to use for this request. When provided, transport-level
@@ -381,7 +412,7 @@ export interface RequestOptions {
 
   /**
    * Proxy URL to route the request through (e.g., 'http://proxy.example.com:8080').
-   * Supports HTTP and SOCKS5 proxies.
+   * Proxy support depends on the native layer and proxy scheme.
    */
   proxy?: string;
 
@@ -393,9 +424,25 @@ export interface RequestOptions {
 
   /**
    * Request timeout in milliseconds. If the request takes longer than this value,
-   * it will be aborted. No timeout is applied by default.
+   * it will be aborted.
+   * @default 30000
    */
   timeout?: number;
+
+  /**
+   * Signal used to abort the request.
+   */
+  signal?: AbortSignal | null;
+
+  /**
+   * Session instance to bind this request to.
+   */
+  session?: Session;
+
+  /**
+   * Controls cookie scoping behavior for this request.
+   */
+  cookieMode?: CookieMode;
 
   /**
    * Identifier for the session that should handle this request.
@@ -488,28 +535,17 @@ export interface NativeResponse {
  *
  * @example
  * ```typescript
- * const ws = await createWebSocket({
- *   url: 'wss://echo.websocket.org',
+ * const ws = await websocket('wss://example.com/socket', {
  *   browser: 'chrome_142',
  *   headers: { 'Authorization': 'Bearer token' },
- *   onMessage: (data) => {
- *     console.log('Received:', data);
- *   },
- *   onClose: (event) => {
- *     console.log('Connection closed:', event.code, event.reason);
- *   },
- *   onError: (error) => {
- *     console.error('WebSocket error:', error);
- *   }
  * });
+ *
+ * ws.onmessage = (event) => {
+ *   console.log('Received:', event.data);
+ * };
  * ```
  */
 export interface WebSocketOptions {
-  /**
-   * The WebSocket URL to connect to. Must use wss:// (secure) or ws:// (insecure) protocol.
-   */
-  url: string;
-
   /**
    * Browser profile to impersonate for the WebSocket upgrade request.
    * Automatically applies browser-specific headers and TLS fingerprints.
@@ -527,32 +563,66 @@ export interface WebSocketOptions {
    * Additional headers to send with the WebSocket upgrade request.
    * Common headers include Authorization, Origin, or custom application headers.
    */
-  headers?: Record<string, string> | HeaderTuple[];
+  headers?: HeadersInit;
 
   /**
    * Proxy URL to route the connection through (e.g., 'http://proxy.example.com:8080').
-   * Supports HTTP and SOCKS5 proxies.
+   * Proxy support depends on the native layer and proxy scheme.
    */
   proxy?: string;
 
   /**
-   * Callback function invoked when a message is received from the server.
-   * The data parameter will be a string for text frames or a Buffer for binary frames.
-   *
-   * @param data - The received message as a string or Buffer
+   * Optional subprotocols for compatibility with the WHATWG WebSocket constructor.
+   * Values are validated for non-empty, unique entries and sent in
+   * the `Sec-WebSocket-Protocol` handshake header.
    */
-  onMessage: (data: string | Buffer) => void;
+  protocols?: string | string[];
 
   /**
-   * Callback function invoked when the WebSocket connection is closed.
-   * This is called for both clean closes and connection errors.
+   * Controls the binary payload type exposed via `MessageEvent.data`.
+   * - "nodebuffer": delivers Node.js Buffer instances (default)
+   * - "arraybuffer": delivers ArrayBuffer instances
+   * - "blob": delivers Blob instances
+   */
+  binaryType?: WebSocketBinaryType;
+}
+
+export interface LegacyWebSocketOptions extends WebSocketOptions {
+  /**
+   * @deprecated Use `websocket(url, options)` or `new WebSocket(...)`.
+   */
+  url: string;
+  /**
+   * @deprecated Use `onmessage` or `addEventListener("message", ...)`.
+   */
+  onMessage?: (data: string | Buffer) => void;
+  /**
+   * @deprecated Use `onclose` or `addEventListener("close", ...)`.
    */
   onClose?: (event: WebSocketCloseEvent) => void;
-
   /**
-   * Callback function invoked when a connection or protocol error occurs.
-   *
-   * @param error - A string describing the error that occurred
+   * @deprecated Use `onerror` or `addEventListener("error", ...)`.
+   */
+  onError?: (error: string) => void;
+}
+
+export type SessionWebSocketOptions = Omit<WebSocketOptions, "browser" | "os" | "proxy">;
+
+export interface LegacySessionWebSocketOptions extends SessionWebSocketOptions {
+  /**
+   * @deprecated Use `session.websocket(url, options)`.
+   */
+  url: string;
+  /**
+   * @deprecated Use `onmessage` or `addEventListener("message", ...)`.
+   */
+  onMessage?: (data: string | Buffer) => void;
+  /**
+   * @deprecated Use `onclose` or `addEventListener("close", ...)`.
+   */
+  onClose?: (event: WebSocketCloseEvent) => void;
+  /**
+   * @deprecated Use `onerror` or `addEventListener("error", ...)`.
    */
   onError?: (error: string) => void;
 }
@@ -571,6 +641,18 @@ export interface NativeWebSocketConnection {
    * @internal
    */
   _id: number;
+
+  /**
+   * Selected subprotocol returned by the server, when present.
+   * @internal
+   */
+  protocol?: string;
+
+  /**
+   * Negotiated extension string returned by the server, when present.
+   * @internal
+   */
+  extensions?: string;
 }
 
 /**
@@ -588,7 +670,7 @@ export interface NativeWebSocketConnection {
  * }
  * ```
  */
-export class RequestError extends Error {
+export class RequestError extends TypeError {
   constructor(message: string) {
     super(message);
     this.name = "RequestError";
