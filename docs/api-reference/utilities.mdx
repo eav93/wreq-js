@@ -137,8 +137,10 @@ The `Response` class representing HTTP responses.
 - `headers`: response headers
 - `ok`: `true` if status is 200-299
 - `url`: final URL after redirects
+- `redirected`: `true` if the response is the result of a redirect
 - `body`: `ReadableStream<Uint8Array>` or `null`
 - `bodyUsed`: `true` if body has been read
+- `contentLength`: content length from headers, or `null`
 - `cookies`: parsed response cookies as `Record<string, string | string[]>`
 
 ### Methods
@@ -146,4 +148,6 @@ The `Response` class representing HTTP responses.
 - `json()`: parse body as JSON
 - `text()`: get body as string
 - `arrayBuffer()`: get body as ArrayBuffer
+- `blob()`: get body as Blob
+- `formData()`: parse body as FormData
 - `clone()`: clone the response

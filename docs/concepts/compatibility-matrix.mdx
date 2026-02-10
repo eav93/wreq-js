@@ -21,7 +21,7 @@ It also highlights intentional extensions and current native limitations from th
 | `Response.blob/formData` | Supported | Implemented through runtime `Response` parsing. |
 | Streaming request body uploads | Not supported | Current native request bridge expects buffered bodies. |
 | Standard timeout behavior | Extended | `wreq-js` defaults to a 30000 ms timeout for safety. |
-| Error type shape | Extended | Errors are `RequestError` and also `TypeError` compatible. |
+| Error type shape | Extended | Errors are `RequestError` which extends `TypeError`. |
 
 ## WebSocket compatibility
 
@@ -33,7 +33,7 @@ It also highlights intentional extensions and current native limitations from th
 | `addEventListener/removeEventListener` | Supported | Supports function listeners, object listeners, `once`, and `signal`. |
 | Unknown event names | Supported | Ignored for compatibility with EventTarget behavior. |
 | `send(string \| Buffer \| ArrayBuffer \| ArrayBufferView \| Blob)` | Supported | Blob is converted to bytes before bridge send. |
-| `binaryType="nodebuffer"` | Extension | Node oriented default for performance and ergonomics. |
+| `binaryType="nodebuffer"` | Extension | Node-oriented default for performance and ergonomics. |
 | `binaryType="arraybuffer"` | Supported | Standard compatible binary mode. |
 | `binaryType="blob"` | Supported | Standard compatible binary mode. |
 | `bufferedAmount` | Supported | Best effort byte count based on pending JS side sends. |
@@ -51,4 +51,4 @@ It also highlights intentional extensions and current native limitations from th
 
 1. Request upload streaming is currently buffered because the native bridge request API takes full byte payloads.
 2. WebSocket helper remains async by design because connection establishment runs through native upgrade flow.
-3. Additional parity work can be added while preserving current Node first defaults.
+3. Additional parity work can be added while preserving current Node-first defaults.

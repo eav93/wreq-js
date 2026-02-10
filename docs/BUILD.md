@@ -82,7 +82,7 @@ sudo dnf install gcc
 
 ## Troubleshooting
 
-### "Cannot find module 'index.node'"
+### "Cannot find module 'wreq-js.*.node'"
 
 The Rust addon wasn't built:
 

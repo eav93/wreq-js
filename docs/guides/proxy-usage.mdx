@@ -38,7 +38,7 @@ const response = await fetch('https://example.com', {
 });
 
 // With authentication
-const response = await fetch('https://example.com', {
+const authedResponse = await fetch('https://example.com', {
   browser: 'chrome_142',
   proxy: 'socks5://user:pass@proxy.example.com:1080',
 });

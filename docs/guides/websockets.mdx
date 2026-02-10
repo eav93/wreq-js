@@ -3,7 +3,7 @@ title: WebSockets
 description: "Connect to WebSocket servers with browser profile options."
 ---
 
-wreq js supports both a convenience helper and a constructor style API.
+wreq-js supports both a convenience helper and a constructor-style API.
 
 ## 1. Quick connection with the helper
 
@@ -23,13 +23,13 @@ ws.onmessage = (event) => {
   console.log('Received:', event.data);
 };
 
-ws.send('hello');
+void ws.send('hello');
 ws.close();
 ```
 
 ## 2. Constructor style
 
-Use `new WebSocket(...)` when you want browser like shape with `CONNECTING` state.
+Use `new WebSocket(...)` when you want browser-like shape with `CONNECTING` state.
 
 ```typescript
 import { WebSocket } from 'wreq-js';
@@ -83,7 +83,7 @@ try {
     console.log(event.data);
   };
 
-  ws.send(JSON.stringify({ type: 'subscribe', channel: 'updates' }));
+  void ws.send(JSON.stringify({ type: 'subscribe', channel: 'updates' }));
   ws.close(1000, 'done');
 } finally {
   await session.close();
@@ -96,10 +96,6 @@ Event handlers and listeners follow familiar WebSocket patterns.
 
 ```typescript
 const ws = await websocket('wss://example.com/socket', { browser: 'chrome_142' });
-
-ws.onopen = () => {
-  console.log('opened');
-};
 
 ws.onmessage = (event) => {
   console.log(event.data);
@@ -153,7 +149,7 @@ ws.close(1000, 'normal shutdown');
 
 If you pass a custom close code, use `1000` or a code in the `3000` to `4999` range.
 
-If you pass a reason, keep it to `123` UTF 8 bytes or fewer.
+If you pass a reason, keep it to `123` UTF-8 bytes or fewer.
 
 ## Related
 

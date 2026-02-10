@@ -57,8 +57,8 @@ function fetch(input: string | URL | Request, init?: RequestInit): Promise<Respo
   AbortSignal for cancelling the request.
 </ParamField>
 
-<ParamField path="redirect" type="'follow'" default="follow">
-  Redirect handling mode. Supported: `'follow'`, `'manual'`, `'error'`.
+<ParamField path="redirect" type="'follow' | 'manual' | 'error'" default="follow">
+  Redirect handling mode.
 </ParamField>
 
 <ParamField path="disableDefaultHeaders" type="boolean" default="false">
@@ -78,8 +78,10 @@ Returns a `Response` object with:
 - `headers`: response headers
 - `ok`: `true` if status is 200-299
 - `url`: final URL after redirects
+- `redirected`: `true` if the response is the result of a redirect
 - `body`: `ReadableStream<Uint8Array>` or `null`
 - `bodyUsed`: `true` if body has been consumed
+- `contentLength`: content length from headers, or `null`
 - `cookies`: parsed response cookies as `Record<string, string | string[]>`
 
 ### Response methods

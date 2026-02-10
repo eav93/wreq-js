@@ -13,7 +13,7 @@ function websocket(url: string | URL, options?: WebSocketOptions): Promise<WebSo
 
 ## Constructor shape
 
-`WebSocket` also supports constructor usage for browser style ergonomics.
+`WebSocket` also supports constructor usage for browser-style ergonomics.
 
 ```typescript
 declare class WebSocket {
@@ -43,7 +43,7 @@ declare class WebSocket {
 
 <ParamField path="protocols" type="string | string[]">
   Optional subprotocol list for compatibility with standard WebSocket shape.
-  Values are validated for non empty unique entries and sent in the `Sec-WebSocket-Protocol` handshake header.
+  Values are validated for non-empty unique entries and sent in the `Sec-WebSocket-Protocol` handshake header.
 </ParamField>
 
 <ParamField path="binaryType" type="\"nodebuffer\" | \"arraybuffer\" | \"blob\"" default="nodebuffer">
@@ -76,7 +76,7 @@ The instance mirrors familiar WebSocket APIs.
 
 `close(code, reason)` accepts code `1000` or codes in the `3000` to `4999` range.
 
-When providing a reason, the UTF 8 byte length must be `123` or fewer.
+When providing a reason, the UTF-8 byte length must be `123` or fewer.
 
 3. Constants
    1. `WebSocket.CONNECTING`
@@ -119,13 +119,11 @@ const ws = await websocket('wss://example.com/socket', {
   headers: { Authorization: 'Bearer token' },
 });
 
-ws.onopen = () => {
-  void ws.send('hello');
-};
-
 ws.onmessage = (event) => {
   console.log(event.data);
 };
+
+void ws.send('hello');
 ```
 
 ### Constructor style

@@ -10,7 +10,7 @@ Browser profiles define the network profile labels that `wreq-js` sends to the n
 1. TLS handshake preferences
 2. HTTP protocol behavior
 3. Default request headers
-4. Platform specific header values
+4. Platform-specific header values
 
 Final wire behavior is determined by the native engine and may vary by profile and runtime.
 
@@ -32,7 +32,7 @@ import { getProfiles } from 'wreq-js';
 
 const profiles = getProfiles();
 console.log(profiles);
-// ['chrome_142', 'chrome_141', 'firefox_139', 'safari_18', 'edge_120', ...]
+// ['chrome_142', 'chrome_141', 'firefox_139', 'safari_18', ...]
 ```
 
 ## Using a profile

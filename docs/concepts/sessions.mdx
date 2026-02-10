@@ -5,7 +5,7 @@ description: "Learn about session management and request isolation."
 
 ## Ephemeral vs. Session mode
 
-By default, each `fetch()` call runs in **ephemeral mode**. This is a good fit for one off requests.
+By default, each `fetch()` call runs in **ephemeral mode**. This is a good fit for one-off requests.
 
 For multi-step flows (like login sequences), use **sessions** to persist state.
 
@@ -56,7 +56,7 @@ await withSession(async (session) => {
 
 ## Session options
 
-Sessions accept the same options as `fetch()` for default behavior:
+Sessions accept `browser`, `os`, `proxy`, `timeout`, `insecure`, and `defaultHeaders`:
 
 ```typescript
 const session = await createSession({

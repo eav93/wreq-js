@@ -33,6 +33,14 @@ function createSession(options?: CreateSessionOptions): Promise<Session>
   Default request timeout in milliseconds.
 </ParamField>
 
+<ParamField path="defaultHeaders" type="HeadersInit">
+  Default headers to include in every session request. Can be a `Headers` object, plain object, or array of key-value pairs.
+</ParamField>
+
+<ParamField path="sessionId" type="string">
+  Explicit session identifier. When omitted, a random ID is generated.
+</ParamField>
+
 <ParamField path="insecure" type="boolean" default="false">
   Accept invalid certificates for all session requests. **Use only in development.**
 </ParamField>
@@ -78,7 +86,15 @@ ws.close();
 
 It does not accept `browser`, `os`, or `proxy` because those are owned by the session transport.
 
-`protocols` values are validated for non empty unique entries and sent in the `Sec-WebSocket-Protocol` handshake header.
+`protocols` values are validated for non-empty unique entries and sent in the `Sec-WebSocket-Protocol` handshake header.
+
+#### session.clearCookies()
+
+Clear all cookies from the session cookie jar.
+
+```typescript
+await session.clearCookies();
+```
 
 #### session.close()
 
@@ -122,7 +138,7 @@ Auto-disposing session helper that closes the session when the callback complete
 
 ```typescript
 function withSession<T>(
-  callback: (session: Session) => Promise<T>,
+  fn: (session: Session) => Promise<T> | T,
   options?: CreateSessionOptions
 ): Promise<T>
 ```

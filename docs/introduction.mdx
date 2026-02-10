@@ -12,10 +12,10 @@ Node.js/TypeScript HTTP client with browser profile and transport controls expos
     No browser process management. Requests run through native Rust bindings.
   </Card>
   <Card title="Browser Profiles" icon="fingerprint">
-    Browser and operating system profiles exposed through a fetch like API.
+    Browser and operating system profiles exposed through a fetch-like API.
   </Card>
   <Card title="Fetch Style API" icon="code">
-    A fetch style API with extra options for browser profiles and sessions.
+    A fetch-style API with extra options for browser profiles and sessions.
   </Card>
   <Card title="WebSocket Support" icon="plug">
     WebSocket API with helper and constructor styles.
@@ -28,9 +28,9 @@ Standard HTTP clients like `axios`, `fetch`, `got`, and `curl` can differ from b
 
 1. **TLS handshake** details such as cipher suite order and extension sets
 2. **HTTP behavior** details such as protocol settings and framing choices
-3. **Header defaults** such as ordering and platform specific values
+3. **Header defaults** such as ordering and platform-specific values
 
-Some anti bot systems inspect these signals.
+Some anti-bot systems inspect these signals.
 
 `wreq-js` uses the [`wreq`](https://github.com/0x676e67/wreq) Rust engine underneath and exposes profile controls through a TypeScript friendly API.
 
@@ -55,7 +55,7 @@ Some anti bot systems inspect these signals.
 
 <Note>
 If your script makes more than one request, start with a **session** and reuse it.
-Sessions reuse the same session context across requests, which is the recommended shape for multi step flows.
+Sessions reuse the same session context across requests, which is the recommended shape for multi-step flows.
 </Note>
 
 ```typescript
@@ -69,7 +69,7 @@ const response = await fetch('https://example.com/api', {
 console.log(await response.json());
 ```
 
-That is it. You can select browser profiles with a familiar fetch style API.
+That's it. You can select browser profiles with a familiar fetch-style API.
 
 For a detailed compatibility breakdown, see [/concepts/compatibility-matrix](/concepts/compatibility-matrix).
 
