@@ -1,14 +1,14 @@
 ---
 title: Transport
-description: "Learn how Transport controls connection pooling, proxies, and emulation settings."
+description: "Learn how Transport controls reusable network settings such as proxy and emulation options."
 ---
 
 ## What is a transport?
 
-A **transport** is a reusable network layer that owns:
+A **transport** is a reusable network layer handle that owns:
 
-- **Connection pooling** (HTTP/1.1 keep-alive and HTTP/2 multiplexing)
-- **Transport-level settings** like `proxy`, `browser`, `os`, and `insecure`
+1. Transport level settings like `proxy`, `browser`, `os`, and `insecure`
+2. Reusable network context used by requests and sessions
 
 Think of it as a "shared network context" you can attach to requests.
 
@@ -18,10 +18,10 @@ Use the simplest tool that matches your needs:
 
 | You need… | Use | Why |
 | --- | --- | --- |
-| One-off request with maximum isolation | Ephemeral `fetch()` | Fresh cookies/TLS state per call |
-| Multi-step flow with cookies (login, checkout, etc.) | Sessions | Cookies persist across requests |
-| Reuse a single proxy + connection pool across many requests | Transport | You create it once and reuse it |
-| Separate cookie jars, but shared network pool (same proxy) | Sessions + shared Transport | Cookies stay isolated per session, pool is shared |
+| One-off request with maximum isolation | Ephemeral `fetch()` | Separate request context per call |
+| Multi-step flow with cookies (login, checkout, etc.) | Sessions | Shared session context across requests |
+| Reuse a single proxy across many requests | Transport | You create it once and reuse it |
+| Separate cookie jars with shared transport config | Sessions + shared Transport | Sessions stay isolated while sharing transport settings |
 
 ## Creating and reusing a transport
 
@@ -47,7 +47,7 @@ try {
 
 ## Using Transport with sessions
 
-Sessions are the right default for cookie-based flows. If you want **multiple sessions** (separate cookies) to share a **single pool** (same proxy/emulation), pass the same transport per request:
+Sessions are the right default for cookie-based flows. If you want **multiple sessions** (separate cookies) to share a **single transport context** (same proxy/emulation), pass the same transport per request:
 
 ```typescript
 import { createSession, createTransport } from 'wreq-js';
@@ -79,10 +79,10 @@ When you pass a `transport`, it owns `browser`, `os`, `proxy`, and `insecure`.
 
 Always close transports you create:
 
-- Close when you no longer need the pool: `await transport.close()`
-- After closing, the transport can’t be used again
+1. Close when you no longer need the transport: `await transport.close()`
+2. After closing, the transport cannot be used again
 
 ## Related
 
-- API details: `/api-reference/transport`
-- Cookie flows: `/concepts/sessions`
+1. API details: `/api-reference/transport`
+2. Cookie flows: `/concepts/sessions`

@@ -1,18 +1,18 @@
 ---
 title: Sessions
-description: "Learn about session management, cookie persistence, and request isolation."
+description: "Learn about session management and request isolation."
 ---
 
 ## Ephemeral vs. Session mode
 
-By default, each `fetch()` call runs in **ephemeral mode**. Cookies and connection state are isolated per call. This is a good fit for one-off requests.
+By default, each `fetch()` call runs in **ephemeral mode**. This is a good fit for one off requests.
 
 For multi-step flows (like login sequences), use **sessions** to persist state.
 
 | Scenario | Recommended | Why |
 | -------- | ----------- | --- |
-| One-off request, no cookie carryover | Ephemeral (default) | Fresh TLS/cookie jar per call |
-| Multi-step login or reuse cookies | Session | Shared cookie jar and TLS cache |
+| One-off request, no cookie carryover | Ephemeral (default) | Request context is isolated per call |
+| Multi-step login or reuse cookies | Session | Shared session context |
 | Parallel jobs that must stay isolated | Ephemeral or per-job session | Avoid cross-talk between tasks |
 
 ## Creating a session
@@ -69,7 +69,7 @@ const session = await createSession({
 
 ## Per-request overrides
 
-Within a session, `browser`, `os`, and `proxy` are fixed at creation time.
+Within a session, `browser`, `os`, and `proxy` are fixed at creation time unless you pass an explicit `transport` for that request.
 
 You can still override per-request values like `timeout`, `headers`, `redirect`, and `body`:
 
@@ -92,11 +92,10 @@ await session.fetch('https://example.com', {
 
 Each session maintains its own:
 
-- **Cookie jar**: cookies are not shared between sessions
-- **TLS cache**: connection state is isolated
-- **Connection pool**: HTTP/2 multiplexing within the session
+1. Cookie jar: cookies are not shared between sessions
+2. Session identifier and defaults
 
-If you want separate cookie jars but a shared pool (for example, multiple sessions through the same proxy), use a shared **Transport** per request.
+If you want separate cookie jars but shared transport settings (for example, multiple sessions through the same proxy), use a shared **Transport** per request.
 
 ```typescript
 // These sessions are completely isolated
@@ -120,7 +119,7 @@ await session2.fetch('https://example.com/check-cookie'); // No cookie present
   <Card title="Parallel isolation" icon="split">
     For parallel scraping, create separate sessions to avoid cookie cross-contamination.
   </Card>
-  <Card title="Reuse for performance" icon="gauge">
-    Sessions reuse connections, making subsequent requests faster.
+  <Card title="Reuse for workflow consistency" icon="gauge">
+    Sessions keep one context for multi-step flows.
   </Card>
 </CardGroup>

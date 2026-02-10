@@ -5,7 +5,7 @@ description: "Utility functions for browser profiles and configuration."
 
 ## getProfiles()
 
-Get a list of all available browser fingerprint profiles.
+Get a list of all available browser profile labels.
 
 ### Signature
 
@@ -24,7 +24,7 @@ import { getProfiles } from 'wreq-js';
 
 const profiles = getProfiles();
 console.log(profiles);
-// ['chrome_142', 'chrome_141', 'firefox_139', 'safari_18', 'edge_120', ...]
+// Example output: ['chrome_142', 'firefox_139', 'safari_18', ...]
 ```
 
 ### Using a random profile
@@ -63,7 +63,7 @@ import { getOperatingSystems } from 'wreq-js';
 
 const systems = getOperatingSystems();
 console.log(systems);
-// ['windows', 'macos', 'linux', 'android', 'ios']
+// Example output: ['windows', 'macos', 'linux', 'android', 'ios']
 ```
 
 ### Combining browser and OS
@@ -93,19 +93,21 @@ The `Headers` class for working with HTTP headers.
 ### Constructor
 
 ```typescript
-new Headers(init?: HeadersInit)
+declare class Headers {
+  constructor(init?: HeadersInit);
+}
 ```
 
 ### Methods
 
-- `append(name, value)` — Add a header value
-- `delete(name)` — Remove a header
-- `get(name)` — Get a header value
-- `has(name)` — Check if header exists
-- `set(name, value)` — Set a header value
-- `entries()` — Iterate over header entries
-- `keys()` — Iterate over header names
-- `values()` — Iterate over header values
+- `append(name, value)`: add a header value
+- `delete(name)`: remove a header
+- `get(name)`: get a header value
+- `has(name)`: check if header exists
+- `set(name, value)`: set a header value
+- `entries()`: iterate over header entries
+- `keys()`: iterate over header names
+- `values()`: iterate over header values
 
 ### Example
 
@@ -137,6 +139,7 @@ The `Response` class representing HTTP responses.
 - `url`: final URL after redirects
 - `body`: `ReadableStream<Uint8Array>` or `null`
 - `bodyUsed`: `true` if body has been read
+- `cookies`: parsed response cookies as `Record<string, string | string[]>`
 
 ### Methods
 

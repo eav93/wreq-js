@@ -1,18 +1,18 @@
 ---
 title: fetch()
-description: "Make HTTP requests with browser fingerprinting."
+description: "Make HTTP requests with browser profile and transport options."
 ---
 
 ## Signature
 
 ```typescript
-function fetch(url: string | URL, init?: RequestInit): Promise<Response>
+function fetch(input: string | URL | Request, init?: RequestInit): Promise<Response>
 ```
 
 ## Parameters
 
-<ParamField path="url" type="string | URL" required>
-  The URL to fetch. Can be a string or URL object.
+<ParamField path="input" type="string | URL | Request" required>
+  The resource to fetch. Can be a URL string, URL object, or a Request object.
 </ParamField>
 
 <ParamField path="init" type="RequestInit">
@@ -30,11 +30,11 @@ function fetch(url: string | URL, init?: RequestInit): Promise<Response>
 </ParamField>
 
 <ParamField path="body" type="BodyInit | null">
-  Request body. Supported types: `string`, `Buffer`, `URLSearchParams`, `ArrayBuffer`, and `ArrayBufferView` (for example `Uint8Array`).
+  Request body. Supported types: `string`, `Buffer`, `URLSearchParams`, `ArrayBuffer`, `ArrayBufferView` (for example `Uint8Array`), `Blob`, and `FormData`.
 </ParamField>
 
 <ParamField path="transport" type="Transport">
-  Reusable transport to use for this request (connection pool + proxy + emulation settings). When provided, you must not also set `browser`, `os`, `proxy`, or `insecure`.
+  Reusable transport context for this request (proxy + emulation settings, with connection behavior handled by the native layer). When provided, you must not also set `browser`, `os`, `proxy`, or `insecure`.
 </ParamField>
 
 <ParamField path="browser" type="BrowserProfile">
@@ -46,10 +46,10 @@ function fetch(url: string | URL, init?: RequestInit): Promise<Response>
 </ParamField>
 
 <ParamField path="proxy" type="string">
-  Proxy URL. Supports HTTP and SOCKS5 proxies.
+  Proxy URL. Support depends on the native layer and proxy scheme.
 </ParamField>
 
-<ParamField path="timeout" type="number">
+<ParamField path="timeout" type="number" default="30000">
   Request timeout in milliseconds.
 </ParamField>
 
@@ -80,13 +80,28 @@ Returns a `Response` object with:
 - `url`: final URL after redirects
 - `body`: `ReadableStream<Uint8Array>` or `null`
 - `bodyUsed`: `true` if body has been consumed
+- `cookies`: parsed response cookies as `Record<string, string | string[]>`
 
 ### Response methods
 
 - `json()`: parse body as JSON
 - `text()`: get body as string
 - `arrayBuffer()`: get body as ArrayBuffer
+- `blob()`: get body as Blob
+- `formData()`: parse body as FormData
 - `clone()`: clone the response
+
+See [/concepts/compatibility-matrix](/concepts/compatibility-matrix) for detailed compatibility notes and intentional deviations.
+
+## Convenience helpers
+
+```typescript
+import { get, post, request } from 'wreq-js';
+```
+
+- `get(url, init?)` calls `fetch(url, { ...init, method: "GET" })`.
+- `post(url, body?, init?)` calls `fetch(url, { ...init, method: "POST", body })`.
+- `request(options)` is deprecated and kept for compatibility. Prefer `fetch(url, init)`.
 
 ## Examples
 

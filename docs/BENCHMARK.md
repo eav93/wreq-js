@@ -1,3 +1,9 @@
+---
+title: Benchmarking
+description: Internal benchmark runner documentation for local and AWS perf checks.
+noindex: true
+---
+
 # Benchmarking
 
 This repo includes a local benchmark runner that starts a local HTTP server and measures request throughput across multiple samples, reporting a 95% confidence interval so you can tell whether a change is above the noise floor.

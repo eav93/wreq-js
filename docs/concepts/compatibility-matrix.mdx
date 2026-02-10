@@ -1,0 +1,54 @@
+---
+title: Compatibility Matrix
+description: "Detailed compatibility notes for fetch and WebSocket APIs."
+---
+
+# Compatibility Matrix
+
+This page documents API compatibility with WHATWG and Node runtime behavior.
+
+It also highlights intentional extensions and current native limitations from the Rust `wreq` layer.
+
+## Fetch compatibility
+
+| Feature | Status | Notes |
+| ------- | ------ | ----- |
+| `fetch(string \| URL, init)` | Supported | Core entry point. |
+| `fetch(Request, init)` | Supported | Request fields are used unless explicitly overridden by `init`. |
+| Unsupported fetch init fields (`credentials`, `mode`, `cache`, `referrer`, `integrity`, `keepalive`, `duplex`) | Not supported | These fields are currently ignored by `wreq-js` runtime options. |
+| `Request` class export | Not supported | `Request` can be used as input, but is not exported by this package. |
+| `Response.json/text/arrayBuffer/clone` | Supported | Includes stream handling and clone semantics. |
+| `Response.blob/formData` | Supported | Implemented through runtime `Response` parsing. |
+| Streaming request body uploads | Not supported | Current native request bridge expects buffered bodies. |
+| Standard timeout behavior | Extended | `wreq-js` defaults to a 30000 ms timeout for safety. |
+| Error type shape | Extended | Errors are `RequestError` and also `TypeError` compatible. |
+
+## WebSocket compatibility
+
+| Feature | Status | Notes |
+| ------- | ------ | ----- |
+| `websocket(url, options)` helper | Supported | Async helper resolves when open. |
+| `new WebSocket(url, ...)` constructor | Supported | Includes `CONNECTING` state and standard constants. |
+| `onopen/onmessage/onclose/onerror` | Supported | Settable properties with event dispatch ordering by registration time. |
+| `addEventListener/removeEventListener` | Supported | Supports function listeners, object listeners, `once`, and `signal`. |
+| Unknown event names | Supported | Ignored for compatibility with EventTarget behavior. |
+| `send(string \| Buffer \| ArrayBuffer \| ArrayBufferView \| Blob)` | Supported | Blob is converted to bytes before bridge send. |
+| `binaryType="nodebuffer"` | Extension | Node oriented default for performance and ergonomics. |
+| `binaryType="arraybuffer"` | Supported | Standard compatible binary mode. |
+| `binaryType="blob"` | Supported | Standard compatible binary mode. |
+| `bufferedAmount` | Supported | Best effort byte count based on pending JS side sends. |
+
+## Session and transport compatibility
+
+| Feature | Status | Notes |
+| ------- | ------ | ----- |
+| `createSession` cookie persistence | Supported | Session cookie jar is reused across session requests and session WebSocket connections. |
+| `session.websocket(...)` | Supported | Reuses session transport plus session cookies. |
+| Per request transport override in session fetch | Supported | Use `transport` to override transport details on a specific request. |
+| Per request `browser/os/proxy` inside session websocket | Not supported | Session websocket uses transport from the session context. |
+
+## Native constraints and roadmap notes
+
+1. Request upload streaming is currently buffered because the native bridge request API takes full byte payloads.
+2. WebSocket helper remains async by design because connection establishment runs through native upgrade flow.
+3. Additional parity work can be added while preserving current Node first defaults.

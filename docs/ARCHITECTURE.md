@@ -1,3 +1,9 @@
+---
+title: Architecture Overview
+description: Internal architecture notes covering JS, Neon, and Rust request flow.
+noindex: true
+---
+
 # Architecture Overview
 
 ## Request Flow
@@ -29,23 +35,21 @@
                ↓
 ┌──────────────────────────────────────┐
 │  wreq HTTP Client                    │
-│  - Impersonate browser               │
-│  - Custom TLS handshake              │
-│  - HTTP/2 frame ordering             │
+│  - Browser profile aware networking  │
+│  - TLS and protocol behavior in      │
+│    native layer                      │
 └──────────────┬───────────────────────┘
                ↓
 ┌──────────────────────────────────────┐
 │  BoringSSL (TLS)                     │
-│  - Chrome-like cipher suites         │
-│  - Exact TLS extensions              │
-│  - JA3/JA4 fingerprint matching      │
+│  - TLS implementation details are    │
+│    handled by native dependencies    │
 └──────────────┬───────────────────────┘
                ↓
 ┌──────────────────────────────────────┐
-│  HTTP/2 Implementation               │
-│  - SETTINGS frame (browser-specific) │
-│  - PRIORITY streams                  │
-│  - Header ordering                   │
+│  HTTP Protocol Layer                 │
+│  - Protocol settings and framing     │
+│    are handled by native layer       │
 └──────────────────────────────────────┘
 ```
 
@@ -53,6 +57,4 @@
 
 - [wreq GitHub](https://github.com/0x676e67/wreq)
 - [BoringSSL](https://boringssl.googlesource.com/boringssl/)
-- [JA3 Fingerprinting](https://github.com/salesforce/ja3)
-- [HTTP/2 RFC](https://httpwg.org/specs/rfc7540.html)
 - [NAPI-RS](https://napi.rs/)

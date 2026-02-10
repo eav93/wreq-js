@@ -1,27 +1,29 @@
 ---
 title: Browser Profiles
-description: "Understand browser fingerprint profiles and operating system emulation."
+description: "Understand browser profiles and operating system emulation."
 ---
 
 ## What are browser profiles?
 
-Browser profiles define the TLS and HTTP/2 fingerprints that `wreq-js` uses to impersonate real browsers. Each profile replicates:
+Browser profiles define the network profile labels that `wreq-js` sends to the native layer. Profiles can influence behavior such as:
 
-- **TLS fingerprint** (JA3/JA4): cipher suites, extensions, and handshake parameters
-- **HTTP/2 settings**: SETTINGS frames, PRIORITY behavior, and flow control
-- **Header ordering**: the order browsers send HTTP headers
-- **Default headers**: `User-Agent`, `Accept`, `Accept-Language`, and more
+1. TLS handshake preferences
+2. HTTP protocol behavior
+3. Default request headers
+4. Platform specific header values
+
+Final wire behavior is determined by the native engine and may vary by profile and runtime.
 
 ## Available browsers
 
-wreq-js supports fingerprints for:
+wreq-js profile families include:
 
-- **Chrome**: recent versions with regular updates
-- **Firefox**: desktop and mobile variants (when available)
-- **Safari**: macOS and iOS variants
-- **Edge**: Chromium-based versions
-- **Opera**: desktop versions
-- **OkHttp**: Android HTTP client
+1. Chrome
+2. Firefox
+3. Safari
+4. Edge
+5. Opera
+6. OkHttp
 
 ## Listing profiles
 
@@ -76,10 +78,10 @@ const response = await fetch('https://example.com', {
 
 ## Profile updates
 
-Browser profiles are synchronized from the upstream [`wreq-util`](https://github.com/0x676e67/wreq-util) project. This ensures fingerprints stay current as browsers release new versions.
+Profile labels are sourced from the native layer and can evolve with upstream updates.
 
 <Tip>
-Use a recent version of `wreq-js` to benefit from updated profiles. Some targets do check for stale fingerprints.
+Use a recent version of `wreq-js` if you want the latest profile set.
 </Tip>
 
 ## Custom headers

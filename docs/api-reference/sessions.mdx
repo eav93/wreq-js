@@ -5,7 +5,7 @@ description: "Create and manage persistent sessions with cookie storage."
 
 ## createSession()
 
-Create a persistent session that maintains cookies and connection state across requests.
+Create a persistent session context for related requests.
 
 Within a session, `browser`, `os`, and `proxy` are fixed at creation time (unless you pass an explicit [`transport`](/api-reference/transport) per request).
 
@@ -29,7 +29,7 @@ function createSession(options?: CreateSessionOptions): Promise<Session>
   Default proxy URL for all session requests.
 </ParamField>
 
-<ParamField path="timeout" type="number">
+<ParamField path="timeout" type="number" default="30000">
   Default request timeout in milliseconds.
 </ParamField>
 
@@ -43,7 +43,7 @@ The returned `Session` object has:
 
 #### session.fetch(url, init?)
 
-Make a request using the session's cookie jar and connection pool.
+Make a request using the session context.
 
 ```typescript
 const response = await session.fetch('https://example.com/api', {
@@ -53,6 +53,32 @@ const response = await session.fetch('https://example.com/api', {
 ```
 
 Per-request options override session defaults.
+
+#### session.websocket(url, options?)
+
+Open a WebSocket that reuses the session transport and context.
+
+Use this after login or any other HTTP flow that sets cookies.
+
+```typescript
+const ws = await session.websocket('wss://example.com/ws', {
+  headers: {
+    Authorization: 'Bearer token',
+  },
+});
+
+ws.onmessage = (event) => {
+  console.log(event.data);
+};
+
+ws.close();
+```
+
+`session.websocket(...)` accepts `headers`, `protocols`, and `binaryType`.
+
+It does not accept `browser`, `os`, or `proxy` because those are owned by the session transport.
+
+`protocols` values are validated for non empty unique entries and sent in the `Sec-WebSocket-Protocol` handshake header.
 
 #### session.close()
 
@@ -72,13 +98,13 @@ const session = await createSession({
   os: 'windows',
 });
 
-// Login - cookies are stored
+// Login in the same session context
 await session.fetch('https://example.com/login', {
   method: 'POST',
   body: new URLSearchParams({ user: 'name', pass: 'secret' }),
 });
 
-// Subsequent requests include cookies
+// Subsequent requests use the same session context
 const profile = await session.fetch('https://example.com/profile');
 console.log(await profile.json());
 
@@ -143,7 +169,6 @@ const data = await withSession(
 
 | Feature | Ephemeral (default `fetch`) | Session |
 | ------- | --------------------------- | ------- |
-| Cookies | Not persisted | Persisted across requests |
-| TLS cache | Fresh each request | Reused within session |
-| Connection pool | New connections | Multiplexed connections |
+| Cookies | Separate request context | Shared session context |
+| Transport settings | Request scoped | Session scoped unless overridden by transport |
 | Use case | Isolated requests | Multi-step flows |

@@ -11,6 +11,9 @@ wreq-js exports the following functions and classes:
 import {
   // Core functions
   fetch,
+  request,
+  get,
+  post,
   createTransport,
   createSession,
   withSession,
@@ -24,6 +27,11 @@ import {
   Headers,
   Response,
   Transport,
+  Session,
+  WebSocket,
+  
+  // Errors
+  RequestError,
 } from 'wreq-js';
 ```
 
@@ -31,8 +39,10 @@ import {
 
 | Function | Description |
 | -------- | ----------- |
-| [`fetch()`](/api-reference/fetch) | Make HTTP requests with browser fingerprinting |
-| [`createTransport()`](/api-reference/transport) | Create a reusable connection pool (ideal per-proxy) |
+| [`fetch()`](/api-reference/fetch) | Make HTTP requests with browser profile options |
+| `get()` / `post()` | Convenience wrappers around `fetch()` |
+| `request()` | Deprecated helper kept for compatibility |
+| [`createTransport()`](/api-reference/transport) | Create a reusable transport context |
 | [`createSession()`](/api-reference/sessions) | Create a persistent session with cookie storage |
 | [`withSession()`](/api-reference/sessions#withsession) | Auto-disposing session helper |
 | [`websocket()`](/api-reference/websocket) | Connect to WebSocket servers |
@@ -41,7 +51,7 @@ import {
 
 ## TypeScript support
 
-wreq-js includes full TypeScript definitions. All types are exported:
+wreq-js includes TypeScript definitions for its public API:
 
 ```typescript
 import type {
@@ -55,20 +65,23 @@ import type {
 } from 'wreq-js';
 ```
 
-## Fetch API compatibility
+## Fetch style surface
 
-wreq-js aims to be compatible with the standard Fetch API while adding browser impersonation features:
+wreq-js provides a fetch like API surface with additional transport and profile options:
 
-| Standard Fetch | wreq-js |
-| -------------- | ------- |
-| `fetch(url, init)` | ✅ Supported |
-| `Request` class | ❌ Not supported (use `fetch(url, init)` directly) |
-| `Response` class | ✅ Supported |
-| `Headers` class | ✅ Supported |
-| `AbortController` | ✅ Supported |
-| `ReadableStream` body | ✅ Supported |
-| Service Workers | ❌ Not applicable |
-| Cache API | ❌ Not applicable |
+| Surface | wreq-js |
+| ------- | ------- |
+| `fetch(url, init)` | Available |
+| `fetch(Request, init)` | Available |
+| `Request` class export | Not currently exposed |
+| `Response` class | Available from the package |
+| `Headers` class | Available from the package |
+| `AbortController` | Standard signal inputs are accepted |
+| `ReadableStream` body | Available on response bodies |
+
+`Session`, `Transport`, and `WebSocket` are exported classes, but you should create them via `createSession()`, `createTransport()`, and `websocket()` or `new WebSocket(url, ...)`.
+
+Detailed compatibility notes live at [/concepts/compatibility-matrix](/concepts/compatibility-matrix).
 
 ## wreq-js extensions
 

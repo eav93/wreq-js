@@ -1,13 +1,13 @@
 ---
 title: Transport
-description: "Reusable connection pool for high-volume requests (especially per-proxy)."
+description: "Reusable transport configuration for high-volume request workflows."
 ---
 
 ## What is a Transport?
 
-A `Transport` is a reusable network context that owns connection pooling and transport-level settings (browser fingerprint, OS emulation, proxy, TLS verification).
+A `Transport` is a reusable network context handle for transport level settings such as browser profile, OS emulation, proxy, and TLS verification options.
 
-Use it when you want **connection reuse without creating a full session/client per proxy**, e.g. when you have thousands of proxies and want each proxy to keep its own warm pool.
+Use it when you want reusable transport settings without creating a full session per proxy, for example when you keep one transport handle per proxy in a long running worker.
 
 ## createTransport()
 
@@ -22,7 +22,7 @@ function createTransport(options?: CreateTransportOptions): Promise<Transport>
 ### Options
 
 <ParamField path="proxy" type="string">
-  Proxy URL for all requests made through this transport. Supports HTTP and SOCKS5 proxies.
+  Proxy URL for all requests made through this transport. Support depends on the native layer and proxy scheme.
 </ParamField>
 
 <ParamField path="browser" type="BrowserProfile" default="chrome_142">
@@ -38,15 +38,15 @@ function createTransport(options?: CreateTransportOptions): Promise<Transport>
 </ParamField>
 
 <ParamField path="poolIdleTimeout" type="number">
-  Idle timeout for pooled connections (ms).
+  Native transport idle timeout option (ms).
 </ParamField>
 
 <ParamField path="poolMaxIdlePerHost" type="number">
-  Maximum number of idle connections kept per host.
+  Native transport per host idle connection limit option.
 </ParamField>
 
 <ParamField path="poolMaxSize" type="number">
-  Maximum total connections across all hosts for this transport.
+  Native transport total connection limit option.
 </ParamField>
 
 <ParamField path="connectTimeout" type="number">
@@ -129,4 +129,4 @@ After closing, `transport.closed` becomes `true` and the transport can no longer
 
 ## Sharing a transport across cookie jars
 
-If you need separate cookie jars but want to reuse a single connection pool (for example, multiple sessions through the same proxy), you can pass the same transport to multiple `Session.fetch()` calls. Cookies remain isolated by session; the transport is only used for the network layer.
+If you need separate cookie jars with shared transport settings (for example, multiple sessions through the same proxy), you can pass the same transport to multiple `Session.fetch()` calls.

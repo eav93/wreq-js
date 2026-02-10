@@ -7,6 +7,19 @@
     "light": "/logo/light.svg"
   },
   "favicon": "/favicon.svg",
+  "seo": {
+    "metatags": {
+      "description": "wreq-js documentation for fetch-style HTTP and WebSocket APIs with browser profile and transport controls.",
+      "keywords": "wreq-js, fetch, websocket, nodejs, typescript, browser profile, proxy, session, transport, http client",
+      "og:title": "wreq-js Documentation",
+      "og:description": "Fetch-style HTTP and WebSocket APIs with browser profile and transport controls.",
+      "og:image": "https://wreq.sqdsh.win/logo/light.svg",
+      "twitter:card": "summary_large_image",
+      "twitter:title": "wreq-js Documentation",
+      "twitter:description": "Fetch-style HTTP and WebSocket APIs with browser profile and transport controls.",
+      "twitter:image": "https://wreq.sqdsh.win/logo/light.svg"
+    }
+  },
   "colors": {
     "primary": "#0D9373",
     "light": "#07C983",
@@ -24,7 +37,12 @@
           },
           {
             "group": "Concepts",
-            "pages": ["concepts/sessions", "concepts/transport", "concepts/browser-profiles"]
+            "pages": [
+              "concepts/sessions",
+              "concepts/transport",
+              "concepts/browser-profiles",
+              "concepts/compatibility-matrix"
+            ]
           },
           {
             "group": "Guides",

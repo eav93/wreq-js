@@ -30,7 +30,7 @@ bun add wreq-js
 
 ## Supported platforms
 
-Prebuilt native binaries are provided for:
+Configured native targets in `package.json` include:
 
 | Platform | Architecture |
 | -------- | ------------ |
@@ -44,17 +44,17 @@ Prebuilt native binaries are provided for:
 ## Building from source
 
 <Warning>
-If a prebuilt binary for your platform is unavailable, the package will attempt to build from source. Make sure you have the following installed:
+If a prebuilt binary for your platform is unavailable, installation may require building from source. Make sure you have the following installed:
 </Warning>
 
 ### Prerequisites
 
-1. **Rust toolchain** — Install via [rustup](https://rustup.rs/):
+1. **Rust toolchain**: install via [rustup](https://rustup.rs/):
    ```bash
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
 
-2. **Build essentials** — C compiler and related tools:
+2. **Build essentials**: C compiler and related tools:
    
    <Tabs>
      <Tab title="macOS">

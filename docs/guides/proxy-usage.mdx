@@ -1,6 +1,6 @@
 ---
 title: Proxy Usage
-description: "Configure HTTP and SOCKS proxies for your requests."
+description: "Configure proxy URLs for your requests."
 ---
 
 ## Basic proxy usage
@@ -29,7 +29,7 @@ const response = await fetch('https://example.com', {
 
 ## SOCKS proxies
 
-SOCKS5 proxies are also supported:
+SOCKS proxy behavior depends on native layer support in your environment:
 
 ```typescript
 const response = await fetch('https://example.com', {
@@ -90,11 +90,17 @@ await session.fetch('https://example.com/page2');
 await session.close();
 ```
 
-## Supported proxy types
+## Common proxy URL formats
 
 | Protocol | URL Format | Notes |
 | -------- | ---------- | ----- |
-| HTTP | `http://host:port` | Standard HTTP proxy |
-| HTTPS | `https://host:port` | TLS-encrypted proxy connection |
-| SOCKS5 | `socks5://host:port` | SOCKS5 proxy |
-| SOCKS5h | `socks5h://host:port` | SOCKS5 with remote DNS resolution |
+| HTTP | `http://host:port` | Common format |
+| HTTPS | `https://host:port` | Availability depends on native layer support |
+| SOCKS5 | `socks5://host:port` | Availability depends on native layer support |
+| SOCKS5h | `socks5h://host:port` | Availability depends on native layer support |
+
+## Related
+
+1. Transport concept: [/concepts/transport](/concepts/transport)
+2. Transport API: [`createTransport()`](/api-reference/transport)
+3. Fetch API options: [`fetch()`](/api-reference/fetch)

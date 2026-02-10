@@ -1,13 +1,19 @@
+---
+title: Build Instructions
+description: Internal developer build and test instructions for the repository.
+noindex: true
+---
+
 # Build Instructions
 
-This guide is for developers who want to build `wreq-js` from source. If you just want to use the library, see the main [README.md](../README.md) — pre-built binaries are included with the npm package.
+This guide is for developers who want to build `wreq-js` from source. If you just want to use the library, see the main [README.md](../README.md). Prebuilt binaries are included with the npm package.
 
 ## Prerequisites
 
 1. **[Install Rust](https://rust-lang.org/tools/install)** (includes Cargo)
 2. **Node.js 20+** (check with `node --version`)
 
-That's it! The `wreq` crate handles BoringSSL internally — no CMake or OpenSSL dev libraries needed.
+That's it. The `wreq` crate handles BoringSSL internally, so no CMake or OpenSSL dev libraries are needed.
 
 ## Building
 
@@ -19,8 +25,8 @@ npm run build
 ```
 
 This runs:
-1. `npm run build:rust` — compiles Rust code to `rust/*.node`
-2. `npm run build:ts` — compiles TypeScript to `dist/`
+1. `npm run build:rust`: compiles Rust code to `rust/*.node`
+2. `npm run build:ts`: compiles TypeScript to `dist/`
 
 ### Individual Builds
 
@@ -45,7 +51,7 @@ npm run build
 npm test
 ```
 
-Runs the full build, starts a local test server, and runs tests.
+Runs the test runner, starts a local test server, and executes the test suite.
 
 ## Platform-Specific Notes
 

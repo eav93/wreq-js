@@ -1,94 +1,162 @@
 ---
 title: WebSockets
-description: "Connect to WebSocket servers with browser fingerprint consistency."
+description: "Connect to WebSocket servers with browser profile options."
 ---
 
-## Basic WebSocket connection
+wreq js supports both a convenience helper and a constructor style API.
 
-Connect to a WebSocket server with browser fingerprinting:
+## 1. Quick connection with the helper
+
+Use `websocket(url, options)` when you want a connected socket from a single `await`.
 
 ```typescript
 import { websocket } from 'wreq-js';
 
-const ws = await websocket({
-  url: 'wss://echo.websocket.org',
+const ws = await websocket('wss://example.com/socket', {
   browser: 'chrome_142',
-  onMessage: (data) => console.log('Received:', data),
+  headers: {
+    Authorization: 'Bearer token',
+  },
 });
 
-await ws.send('Hello!');
-await ws.close();
+ws.onmessage = (event) => {
+  console.log('Received:', event.data);
+};
+
+ws.send('hello');
+ws.close();
 ```
 
-## WebSocket options
+## 2. Constructor style
+
+Use `new WebSocket(...)` when you want browser like shape with `CONNECTING` state.
 
 ```typescript
-const ws = await websocket({
-  url: 'wss://example.com/socket',
+import { WebSocket } from 'wreq-js';
+
+const ws = new WebSocket('wss://example.com/socket', {
+  browser: 'chrome_142',
+  os: 'windows',
+});
+
+ws.onopen = () => {
+  void ws.send('hello from constructor api');
+};
+
+ws.addEventListener('message', (event) => {
+  console.log(event.data);
+});
+
+ws.onerror = () => {
+  console.error('WebSocket error');
+};
+```
+
+## 3. Sessions, impersonation, and cookies
+
+For authenticated flows, create a session, log in with HTTP, then open the WebSocket with the same session.
+
+`session.websocket(...)` reuses the session transport and context.
+
+```typescript
+import { createSession } from 'wreq-js';
+
+const session = await createSession({
   browser: 'chrome_142',
   os: 'windows',
   proxy: 'http://proxy.example.com:8080',
-  headers: {
-    'Authorization': 'Bearer token',
-  },
-  onMessage: (data) => {
-    console.log('Message:', data);
-  },
-  onClose: (event) => {
-    console.log('Connection closed:', event.code, event.reason);
-  },
-  onError: (error) => {
-    console.error('Error:', error);
-  },
+});
+
+try {
+  await session.fetch('https://example.com/login', {
+    method: 'POST',
+    body: new URLSearchParams({ user: 'name', pass: 'secret' }),
+  });
+
+  const ws = await session.websocket('wss://example.com/ws', {
+    headers: {
+      'X-Client': 'dashboard',
+    },
+  });
+
+  ws.onmessage = (event) => {
+    console.log(event.data);
+  };
+
+  ws.send(JSON.stringify({ type: 'subscribe', channel: 'updates' }));
+  ws.close(1000, 'done');
+} finally {
+  await session.close();
+}
+```
+
+## 4. Event model
+
+Event handlers and listeners follow familiar WebSocket patterns.
+
+```typescript
+const ws = await websocket('wss://example.com/socket', { browser: 'chrome_142' });
+
+ws.onopen = () => {
+  console.log('opened');
+};
+
+ws.onmessage = (event) => {
+  console.log(event.data);
+};
+
+ws.onclose = (event) => {
+  console.log(event.code, event.reason, event.wasClean);
+};
+
+ws.addEventListener('error', () => {
+  console.error('error');
 });
 ```
 
-## Sending messages
+## 5. Binary messages
+
+`binaryType` defaults to `nodebuffer`. You can set it to `arraybuffer` or `blob`.
 
 ```typescript
-// Send text
-await ws.send('Hello, server!');
+const ws = await websocket('wss://example.com/socket', { browser: 'chrome_142' });
 
-// Send JSON
-await ws.send(JSON.stringify({ type: 'ping' }));
+ws.binaryType = 'arraybuffer';
+
+ws.onmessage = (event) => {
+  if (event.data instanceof ArrayBuffer) {
+    console.log('ArrayBuffer bytes:', event.data.byteLength);
+    return;
+  }
+
+  if (Buffer.isBuffer(event.data)) {
+    console.log('Buffer bytes:', event.data.byteLength);
+    return;
+  }
+
+  console.log('Text:', event.data);
+};
 ```
-
-## Handling messages
-
-Process incoming messages in the `onMessage` callback:
 
 ```typescript
-const ws = await websocket({
-  url: 'wss://example.com/socket',
-  browser: 'chrome_142',
-  onMessage: (data) => {
-    // data can be string or binary
-    if (typeof data === 'string') {
-      const message = JSON.parse(data);
-      console.log('Received JSON:', message);
-    } else {
-      console.log('Received binary:', data.byteLength, 'bytes');
-    }
-  },
-});
+ws.binaryType = 'blob';
 ```
 
-## Closing the connection
+## 6. Close behavior
 
-Always close the WebSocket when done:
+Use `close()` or `close(code, reason)`.
 
 ```typescript
-await ws.close();
+ws.close();
+ws.close(1000, 'normal shutdown');
 ```
 
-## Why use wreq-js WebSockets?
+If you pass a custom close code, use `1000` or a code in the `3000` to `4999` range.
 
-Standard WebSocket libraries don't replicate browser TLS fingerprints. When connecting to services that check for automation:
+If you pass a reason, keep it to `123` UTF 8 bytes or fewer.
 
-- **Browser fingerprints**: same JA3/JA4 profile family as HTTP requests
-- **Consistent headers**: browser-matching Upgrade headers
-- **Proxy support**: route WebSocket connections through proxies
+## Related
 
-<Tip>
-Use the same `browser` profile for both HTTP and WebSocket connections to maintain fingerprint consistency throughout your session.
-</Tip>
+1. API reference: [`websocket()`](/api-reference/websocket)
+2. Session API: [`createSession()`](/api-reference/sessions)
+3. Session concepts: [/concepts/sessions](/concepts/sessions)

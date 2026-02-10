@@ -1,6 +1,6 @@
 ---
 title: Quickstart
-description: "Get started with wreq-js in under 5 minutes."
+description: "Get started with wreq-js."
 ---
 
 ## Install the package
@@ -26,8 +26,8 @@ bun add wreq-js
 ## Make your first request
 
 <Note>
-For best performance, prefer **sessions** for anything beyond a single request.
-One-off `fetch()` calls are **ephemeral** by default (fresh cookies/TLS per call), which is great for isolation but usually slower.
+For multi step flows, prefer **sessions** after your first request.
+One off `fetch()` calls use an isolated request context by default.
 </Note>
 
 ```typescript
@@ -42,7 +42,7 @@ console.log(await response.json());
 
 ## Use a session for multiple requests
 
-Sessions persist cookies and connection state across requests:
+Sessions keep a shared session context across requests:
 
 ```typescript
 import { createSession } from 'wreq-js';
@@ -55,7 +55,7 @@ await session.fetch('https://example.com/login', {
   body: new URLSearchParams({ user: 'name', pass: 'secret' }),
 });
 
-// Access authenticated endpoint (cookies are preserved)
+// Access authenticated endpoint in the same session context
 const account = await session.fetch('https://example.com/account');
 console.log(await account.text());
 
@@ -84,12 +84,12 @@ const response = await fetch('https://example.com', {
     Understand session management and cookie isolation.
   </Card>
   <Card title="Transport" icon="route" href="/concepts/transport">
-    Reuse connection pools across requests (ideal per-proxy).
+    Reuse transport settings across requests (ideal per proxy).
   </Card>
   <Card title="API Reference" icon="book" href="/api-reference/overview">
     Explore the full API documentation.
   </Card>
   <Card title="WebSockets" icon="plug" href="/guides/websockets">
-    Connect to WebSocket servers with browser fingerprints.
+    Connect to WebSocket servers with browser profile options.
   </Card>
 </CardGroup>

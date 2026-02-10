@@ -1,150 +1,162 @@
 ---
 title: websocket()
-description: "Connect to WebSocket servers with browser fingerprinting."
+description: "Connect to WebSocket servers with browser profile options."
 ---
 
 ## Signature
 
 ```typescript
-function websocket(options: WebSocketOptions): Promise<WebSocket>
+function websocket(url: string | URL, options?: WebSocketOptions): Promise<WebSocket>
 ```
 
-## Options
+`websocket(...)` resolves after the connection opens.
 
-<ParamField path="url" type="string" required>
-  WebSocket URL. Must start with `ws://` or `wss://`.
-</ParamField>
+## Constructor shape
+
+`WebSocket` also supports constructor usage for browser style ergonomics.
+
+```typescript
+declare class WebSocket {
+  constructor(url: string | URL, protocols?: string | string[]);
+  constructor(url: string | URL, options?: WebSocketOptions);
+  constructor(url: string | URL, protocols?: string | string[], options?: WebSocketOptions);
+}
+```
+
+## WebSocketOptions
 
 <ParamField path="browser" type="BrowserProfile">
-  Browser fingerprint profile to use for the connection.
+  Browser fingerprint profile for the connection.
 </ParamField>
 
 <ParamField path="os" type="EmulationOS">
-  Operating system to emulate.
+  Operating system fingerprint for the connection.
 </ParamField>
 
 <ParamField path="proxy" type="string">
-  Proxy URL for the WebSocket connection.
+  Proxy URL for the connection.
 </ParamField>
 
-<ParamField path="headers" type="Record<string, string>">
+<ParamField path="headers" type="HeadersInit">
   Additional headers for the WebSocket handshake.
 </ParamField>
 
-<ParamField path="onMessage" type="(data: string | Buffer) => void">
-  Callback for incoming messages.
+<ParamField path="protocols" type="string | string[]">
+  Optional subprotocol list for compatibility with standard WebSocket shape.
+  Values are validated for non empty unique entries and sent in the `Sec-WebSocket-Protocol` handshake header.
 </ParamField>
 
-<ParamField path="onClose" type="(event: { code: number; reason: string }) => void">
-  Callback when the connection closes. Includes close code and reason when available.
+<ParamField path="binaryType" type="\"nodebuffer\" | \"arraybuffer\" | \"blob\"" default="nodebuffer">
+  Binary payload format exposed at `event.data`.
 </ParamField>
 
-<ParamField path="onError" type="(error: string) => void">
-  Callback for connection errors.
-</ParamField>
+## Returned WebSocket instance
 
-## WebSocket object
+The instance mirrors familiar WebSocket APIs.
 
-The returned `WebSocket` object has:
+1. Properties
+   1. `url`
+   2. `readyState`
+   3. `binaryType`
+   4. `bufferedAmount`
+   5. `protocol`
+   6. `extensions`
+   7. `onopen`
+   8. `onmessage`
+   9. `onclose`
+   10. `onerror`
 
-### ws.send(data)
+`protocol` and `extensions` reflect negotiated values from the upgrade response when the server provides them.
 
-Send a message to the server.
+2. Methods
+   1. `send(data)` where data can be `string`, `Buffer`, `ArrayBuffer`, `ArrayBufferView`, or `Blob`
+   2. `close(code?, reason?)`
+   3. `addEventListener(type, listener)`
+   4. `removeEventListener(type, listener)`
+
+`close(code, reason)` accepts code `1000` or codes in the `3000` to `4999` range.
+
+When providing a reason, the UTF 8 byte length must be `123` or fewer.
+
+3. Constants
+   1. `WebSocket.CONNECTING`
+   2. `WebSocket.OPEN`
+   3. `WebSocket.CLOSING`
+   4. `WebSocket.CLOSED`
+
+## Session support
+
+For authenticated socket flows, use [`createSession()`](/api-reference/sessions) and then `session.websocket(url, options)`.
+
+Within a session, WebSocket uses the same session context and transport settings.
 
 ```typescript
-await ws.send('Hello, server!');
-await ws.send(JSON.stringify({ type: 'ping' }));
-await ws.send(new Uint8Array([1, 2, 3]));
-```
+import { createSession } from 'wreq-js';
 
-### ws.close()
+const session = await createSession({ browser: 'chrome_142' });
 
-Close the WebSocket connection.
+await session.fetch('https://example.com/login', {
+  method: 'POST',
+  body: new URLSearchParams({ user: 'name', pass: 'secret' }),
+});
 
-```typescript
-await ws.close();
+const ws = await session.websocket('wss://example.com/ws');
+
+ws.onmessage = (event) => {
+  console.log(event.data);
+};
 ```
 
 ## Examples
 
-### Basic connection
+### Helper style
 
 ```typescript
 import { websocket } from 'wreq-js';
 
-const ws = await websocket({
-  url: 'wss://echo.websocket.org',
+const ws = await websocket('wss://example.com/socket', {
   browser: 'chrome_142',
-  onMessage: (data) => {
-    console.log('Received:', data);
-  },
+  headers: { Authorization: 'Bearer token' },
 });
 
-await ws.send('Hello!');
+ws.onopen = () => {
+  void ws.send('hello');
+};
 
-// Later...
-await ws.close();
+ws.onmessage = (event) => {
+  console.log(event.data);
+};
 ```
 
-### With all callbacks
+### Constructor style
 
 ```typescript
-const ws = await websocket({
-  url: 'wss://example.com/socket',
-  browser: 'chrome_142',
-  headers: {
-    'Authorization': 'Bearer token123',
-  },
-  onMessage: (data) => {
-    if (typeof data === 'string') {
-      console.log('Text message:', data);
-    } else {
-      console.log('Binary message:', data.byteLength, 'bytes');
-    }
-  },
-  onClose: (event) => {
-    console.log('Connection closed:', event.code, event.reason);
-  },
-  onError: (error) => {
-    console.error('WebSocket error:', error);
-  },
+import { WebSocket } from 'wreq-js';
+
+const ws = new WebSocket('wss://example.com/socket', {
+  browser: 'firefox_139',
+  proxy: 'http://proxy.example.com:8080',
+});
+
+ws.addEventListener('open', () => {
+  void ws.send(JSON.stringify({ type: 'ping' }));
+});
+
+ws.addEventListener('close', (event) => {
+  console.log(event.code, event.reason);
 });
 ```
 
-### Through a proxy
+### Binary payload mode
 
 ```typescript
-const ws = await websocket({
-  url: 'wss://example.com/socket',
-  browser: 'chrome_142',
-  proxy: 'http://user:pass@proxy.example.com:8080',
-  onMessage: (data) => console.log(data),
-});
-```
+const ws = await websocket('wss://example.com/socket', { browser: 'chrome_142' });
 
-### JSON messaging
+ws.binaryType = 'arraybuffer';
 
-```typescript
-const ws = await websocket({
-  url: 'wss://api.example.com/ws',
-  browser: 'chrome_142',
-  onMessage: (data) => {
-    if (typeof data === 'string') {
-      const message = JSON.parse(data);
-      
-      switch (message.type) {
-        case 'pong':
-          console.log('Server responded to ping');
-          break;
-        case 'data':
-          console.log('Received data:', message.payload);
-          break;
-      }
-    }
-  },
-});
-
-// Send JSON messages
-await ws.send(JSON.stringify({ type: 'ping' }));
-await ws.send(JSON.stringify({ type: 'subscribe', channel: 'updates' }));
+ws.onmessage = (event) => {
+  if (event.data instanceof ArrayBuffer) {
+    console.log('received array buffer', event.data.byteLength);
+  }
+};
 ```
