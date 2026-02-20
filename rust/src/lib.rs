@@ -6,8 +6,9 @@ use anyhow::anyhow;
 use client::{
     HTTP_RUNTIME, RedirectMode, RequestOptions, Response, clear_managed_session,
     create_managed_session, create_managed_transport, drop_body_stream, drop_managed_session,
-    drop_managed_transport, generate_session_id, make_request,
+    drop_managed_transport, generate_session_id, get_session_cookies, make_request,
     read_body_all as native_read_body_all, read_body_chunk as native_read_body_chunk,
+    set_session_cookie,
 };
 use dashmap::DashMap;
 use futures_util::StreamExt;
@@ -1204,6 +1205,40 @@ fn websocket_close(mut cx: FunctionContext) -> JsResult<JsPromise> {
     Ok(promise)
 }
 
+fn get_cookies(mut cx: FunctionContext) -> JsResult<JsObject> {
+    let session_id = cx.argument::<JsString>(0)?.value(&mut cx);
+    let url = cx.argument::<JsString>(1)?.value(&mut cx);
+
+    match get_session_cookies(&session_id, &url) {
+        Ok(cookies) => {
+            let obj = cx.empty_object();
+            for (name, value) in cookies {
+                let js_value = cx.string(&value);
+                obj.set(&mut cx, name.as_str(), js_value)?;
+            }
+            Ok(obj)
+        }
+        Err(e) => {
+            let msg = format!("{:#}", e);
+            cx.throw_error(msg)
+        }
+    }
+}
+
+fn set_cookie(mut cx: FunctionContext) -> JsResult<JsUndefined> {
+    let session_id = cx.argument::<JsString>(0)?.value(&mut cx);
+    let name = cx.argument::<JsString>(1)?.value(&mut cx);
+    let value = cx.argument::<JsString>(2)?.value(&mut cx);
+    let url = cx.argument::<JsString>(3)?.value(&mut cx);
+
+    if let Err(e) = set_session_cookie(&session_id, &name, &value, &url) {
+        let msg = format!("{:#}", e);
+        return cx.throw_error(msg);
+    }
+
+    Ok(cx.undefined())
+}
+
 // Module initialization
 #[neon::main]
 fn main(mut cx: ModuleContext) -> NeonResult<()> {
@@ -1217,6 +1252,8 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("createSession", create_session)?;
     cx.export_function("clearSession", clear_session)?;
     cx.export_function("dropSession", drop_session)?;
+    cx.export_function("getCookies", get_cookies)?;
+    cx.export_function("setCookie", set_cookie)?;
     cx.export_function("createTransport", create_transport)?;
     cx.export_function("dropTransport", drop_transport)?;
     cx.export_function("websocketConnect", websocket_connect)?;

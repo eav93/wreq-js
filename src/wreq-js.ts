@@ -108,6 +108,8 @@ let nativeBinding: {
   createSession: (options: NativeSessionOptions) => string;
   clearSession: (sessionId: string) => void;
   dropSession: (sessionId: string) => void;
+  getCookies: (sessionId: string, url: string) => Record<string, string>;
+  setCookie: (sessionId: string, name: string, value: string, url: string) => void;
   createTransport: (options: NativeTransportOptions) => string;
   dropTransport: (transportId: string) => void;
   getOperatingSystems?: () => string[];
@@ -1014,6 +1016,24 @@ export class Session implements SessionHandle {
     this.ensureActive();
     try {
       nativeBinding.clearSession(this.id);
+    } catch (error) {
+      throw new RequestError(String(error));
+    }
+  }
+
+  getCookies(url: string | URL): Record<string, string> {
+    this.ensureActive();
+    try {
+      return nativeBinding.getCookies(this.id, String(url));
+    } catch (error) {
+      throw new RequestError(String(error));
+    }
+  }
+
+  setCookie(name: string, value: string, url: string | URL): void {
+    this.ensureActive();
+    try {
+      nativeBinding.setCookie(this.id, name, value, String(url));
     } catch (error) {
       throw new RequestError(String(error));
     }
