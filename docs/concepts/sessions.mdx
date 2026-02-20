@@ -88,6 +88,44 @@ await session.fetch('https://example.com', {
 });
 ```
 
+## Cookie management
+
+Sessions automatically handle cookies across requests, but you can also read and write cookies directly.
+
+### Reading cookies
+
+Use `getCookies(url)` to inspect which cookies would be sent to a URL:
+
+```typescript
+await session.fetch('https://example.com/login', {
+  method: 'POST',
+  body: new URLSearchParams({ user: 'name', pass: 'secret' }),
+});
+
+const cookies = session.getCookies('https://example.com');
+console.log(cookies);
+// { "session_id": "abc123", "csrf": "xyz" }
+```
+
+### Setting cookies manually
+
+Use `setCookie(name, value, url)` to inject a cookie into the session jar:
+
+```typescript
+session.setCookie('auth_token', 'my-token', 'https://example.com');
+
+// Subsequent requests to example.com will include the cookie
+const resp = await session.fetch('https://example.com/api');
+```
+
+### Clearing cookies
+
+Use `clearCookies()` to remove all cookies from the session:
+
+```typescript
+await session.clearCookies();
+```
+
 ## Session isolation
 
 Each session maintains its own:

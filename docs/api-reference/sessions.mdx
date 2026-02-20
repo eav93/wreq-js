@@ -88,6 +88,41 @@ It does not accept `browser`, `os`, or `proxy` because those are owned by the se
 
 `protocols` values are validated for non-empty unique entries and sent in the `Sec-WebSocket-Protocol` handshake header.
 
+#### session.getCookies(url)
+
+Return cookies that would be sent to the given URL (RFC 6265 domain/path matching).
+
+```typescript
+const cookies: Record<string, string> = session.getCookies('https://example.com');
+// { "session_id": "abc123", "theme": "dark" }
+```
+
+<ParamField path="url" type="string | URL" required>
+  Target URL. Only cookies whose domain and path match this URL are returned.
+</ParamField>
+
+**Returns** `Record<string, string>` — cookie name/value pairs.
+
+#### session.setCookie(name, value, url)
+
+Add a cookie to the session jar, scoped to the domain/path of the given URL.
+
+```typescript
+session.setCookie('token', 'abc123', 'https://example.com');
+```
+
+<ParamField path="name" type="string" required>
+  Cookie name.
+</ParamField>
+
+<ParamField path="value" type="string" required>
+  Cookie value.
+</ParamField>
+
+<ParamField path="url" type="string | URL" required>
+  URL that determines the cookie's domain and path scope.
+</ParamField>
+
 #### session.clearCookies()
 
 Clear all cookies from the session cookie jar.
