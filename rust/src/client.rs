@@ -684,6 +684,7 @@ mod tests {
         assert_ne!(base_config, read_config);
         assert_ne!(connect_config, read_config);
     }
+
 }
 
 /// Get cookies from a session's jar that would be sent to the given URL
@@ -732,9 +733,17 @@ fn parse_cookie_pairs(s: &str) -> Vec<(String, String)> {
 
 /// Add a cookie to a session's jar, scoped to the domain/path of the given URL.
 pub fn set_session_cookie(session_id: &str, name: &str, value: &str, url: &str) -> Result<()> {
-    let jar = SESSION_MANAGER.jar_for(session_id)?;
+    use wreq::cookie::IntoCookie;
+
     let cookie_str = format!("{}={}", name, value);
-    jar.add(cookie_str.as_str(), url);
+    let cookie = cookie_str
+        .as_str()
+        .into_cookie()
+        .ok_or_else(|| anyhow!("Invalid cookie string: {}", cookie_str))?;
+    let uri: wreq::Uri = url.parse().with_context(|| format!("Invalid URL: {}", url))?;
+
+    let jar = SESSION_MANAGER.jar_for(session_id)?;
+    jar.add(cookie, uri);
     Ok(())
 }
 

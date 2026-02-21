@@ -5,6 +5,84 @@ import { createSession, RequestError, withSession, fetch as wreqFetch } from "..
 import { httpUrl } from "../helpers/http.js";
 
 describe("HTTP sessions", () => {
+  test("setCookie/getCookies round-trips and affects outgoing requests", async () => {
+    const session = await createSession({ browser: "chrome_142" });
+    const cookiesUrl = httpUrl("/cookies");
+
+    try {
+      assert.deepStrictEqual(session.getCookies(cookiesUrl), {}, "New sessions should start with an empty cookie jar");
+
+      session.setCookie("token", "abc123", cookiesUrl);
+
+      assert.deepStrictEqual(session.getCookies(cookiesUrl), { token: "abc123" });
+
+      const response = await session.fetch(cookiesUrl, { timeout: 10_000 });
+      const body = await response.json<{ cookies: Record<string, string> }>();
+      assert.strictEqual(body.cookies.token, "abc123");
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("recreating a disposed session id starts with an empty cookie jar", async () => {
+    const sessionId = `cookie-disposed-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const cookiesUrl = httpUrl("/cookies");
+
+    const first = await createSession({ browser: "chrome_142", sessionId });
+    try {
+      first.setCookie("persist", "nope", cookiesUrl);
+      assert.deepStrictEqual(first.getCookies(cookiesUrl), { persist: "nope" });
+    } finally {
+      await first.close();
+    }
+
+    const second = await createSession({ browser: "chrome_142", sessionId });
+    try {
+      assert.deepStrictEqual(second.getCookies(cookiesUrl), {}, "Dropped session ids should not retain cookies");
+    } finally {
+      await second.close();
+    }
+  });
+
+  test("rejects invalid setCookie input and keeps jar unchanged", async () => {
+    const session = await createSession({ browser: "chrome_142" });
+    const cookiesUrl = httpUrl("/cookies");
+
+    try {
+      assert.deepStrictEqual(session.getCookies(cookiesUrl), {});
+
+      assert.throws(
+        () => {
+          session.setCookie("", "value", cookiesUrl);
+        },
+        (error: unknown) => error instanceof RequestError && /Invalid cookie string/.test(error.message),
+      );
+
+      assert.deepStrictEqual(session.getCookies(cookiesUrl), {}, "Invalid setCookie input should not mutate the jar");
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("rejects cookie APIs on disposed sessions", async () => {
+    const session = await createSession({ browser: "chrome_142" });
+    await session.close();
+
+    assert.throws(
+      () => {
+        session.getCookies(httpUrl("/cookies"));
+      },
+      (error: unknown) => error instanceof RequestError && /Session has been closed/.test(error.message),
+    );
+
+    assert.throws(
+      () => {
+        session.setCookie("k", "v", httpUrl("/cookies"));
+      },
+      (error: unknown) => error instanceof RequestError && /Session has been closed/.test(error.message),
+    );
+  });
+
   test("isolates cookies for default fetch calls", async () => {
     await wreqFetch(httpUrl("/cookies/set?ephemeral=on"), {
       browser: "chrome_142",
