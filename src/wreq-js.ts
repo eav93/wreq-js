@@ -90,6 +90,8 @@ interface NativeTransportOptions {
   poolMaxSize?: number;
   connectTimeout?: number;
   readTimeout?: number;
+  clientCert?: Buffer;
+  clientKey?: Buffer;
 }
 
 interface NativeRequestOptions {
@@ -109,6 +111,8 @@ interface NativeRequestOptions {
   insecure?: boolean;
   transportId?: string;
   compress?: boolean;
+  clientCert?: Buffer;
+  clientKey?: Buffer;
 }
 
 let nativeBinding: {
@@ -313,6 +317,8 @@ type SessionDefaults = {
   defaultHeaders?: HeaderTuple[];
   transportId?: string;
   ownsTransport?: boolean;
+  clientCert?: Buffer;
+  clientKey?: Buffer;
 };
 
 type SessionResolution = {
@@ -327,6 +333,8 @@ type TransportResolution = {
   mode?: ResolvedEmulationMode;
   proxy?: string;
   insecure?: boolean;
+  clientCert?: Buffer;
+  clientKey?: Buffer;
 };
 
 type SerializedCustomEmulation = {
@@ -400,6 +408,14 @@ function normalizeSessionOptions(options?: CreateSessionOptions): { sessionId: s
 
   if (options?.insecure !== undefined) {
     defaults.insecure = options.insecure;
+  }
+
+  if (options?.clientCert !== undefined) {
+    defaults.clientCert = options.clientCert;
+  }
+
+  if (options?.clientKey !== undefined) {
+    defaults.clientKey = options.clientKey;
   }
 
   if (options?.defaultHeaders !== undefined) {
@@ -1356,6 +1372,12 @@ function resolveTransportContext(config: WreqRequestInit, sessionDefaults?: Sess
   }
   if (config.insecure !== undefined) {
     resolved.insecure = config.insecure;
+  }
+  if (config.clientCert !== undefined) {
+    resolved.clientCert = config.clientCert;
+  }
+  if (config.clientKey !== undefined) {
+    resolved.clientKey = config.clientKey;
   }
   return resolved;
 }
@@ -2489,6 +2511,12 @@ export async function fetch(input: string | URL | Request, init?: WreqRequestIni
     if (transport.insecure !== undefined) {
       requestOptions.insecure = transport.insecure;
     }
+    if (transport.clientCert !== undefined) {
+      requestOptions.clientCert = transport.clientCert;
+    }
+    if (transport.clientKey !== undefined) {
+      requestOptions.clientKey = transport.clientKey;
+    }
   }
 
   requestOptions.timeout = timeout;
@@ -2537,6 +2565,8 @@ export async function createTransport(options?: CreateTransportOptions): Promise
       ...(options?.poolMaxSize !== undefined && { poolMaxSize: options.poolMaxSize }),
       ...(options?.connectTimeout !== undefined && { connectTimeout: options.connectTimeout }),
       ...(options?.readTimeout !== undefined && { readTimeout: options.readTimeout }),
+      ...(options?.clientCert !== undefined && { clientCert: options.clientCert }),
+      ...(options?.clientKey !== undefined && { clientKey: options.clientKey }),
     };
     applyNativeEmulationMode(transportOptions, mode);
 
@@ -2558,6 +2588,8 @@ export async function createSession(options?: CreateSessionOptions): Promise<Ses
     const transportOptions: NativeTransportOptions = {
       ...(defaults.proxy !== undefined && { proxy: defaults.proxy }),
       ...(defaults.insecure !== undefined && { insecure: defaults.insecure }),
+      ...(defaults.clientCert !== undefined && { clientCert: defaults.clientCert }),
+      ...(defaults.clientKey !== undefined && { clientKey: defaults.clientKey }),
     };
     applyNativeEmulationMode(transportOptions, defaults.transportMode);
     transportId = nativeBinding.createTransport(transportOptions);

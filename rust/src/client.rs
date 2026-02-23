@@ -14,6 +14,7 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 use wreq::cookie::Jar;
 use wreq::header::OrigHeaderMap;
+use wreq::tls::Identity;
 use wreq::{Client as HttpClient, Method, Proxy, redirect};
 
 use crate::custom_emulation::resolve_emulation;
@@ -80,6 +81,8 @@ pub struct RequestOptions {
     pub connect_timeout: Option<u64>,
     pub read_timeout: Option<u64>,
     pub compress: bool,
+    pub client_cert: Option<Arc<Vec<u8>>>,
+    pub client_key: Option<Arc<Vec<u8>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -102,6 +105,8 @@ struct SessionConfig {
     insecure: bool,
     connect_timeout: Option<Duration>,
     read_timeout: Option<Duration>,
+    client_cert: Option<Arc<Vec<u8>>>,
+    client_key: Option<Arc<Vec<u8>>>,
 }
 
 impl SessionConfig {
@@ -115,6 +120,8 @@ impl SessionConfig {
             insecure: options.insecure,
             connect_timeout: options.connect_timeout.map(Duration::from_millis),
             read_timeout: options.read_timeout.map(Duration::from_millis),
+            client_cert: options.client_cert.clone(),
+            client_key: options.client_key.clone(),
         }
     }
 }
@@ -131,6 +138,8 @@ struct TransportConfig {
     pool_max_size: Option<u32>,
     connect_timeout: Option<Duration>,
     read_timeout: Option<Duration>,
+    client_cert: Option<Arc<Vec<u8>>>,
+    client_key: Option<Arc<Vec<u8>>>,
 }
 
 impl TransportConfig {
@@ -147,6 +156,8 @@ impl TransportConfig {
             pool_max_size: options.pool_max_size,
             connect_timeout: options.connect_timeout.map(Duration::from_millis),
             read_timeout: options.read_timeout.map(Duration::from_millis),
+            client_cert: options.client_cert.clone(),
+            client_key: options.client_key.clone(),
         }
     }
 
@@ -162,6 +173,8 @@ impl TransportConfig {
         pool_max_size: Option<u32>,
         connect_timeout: Option<u64>,
         read_timeout: Option<u64>,
+        client_cert: Option<Arc<Vec<u8>>>,
+        client_key: Option<Arc<Vec<u8>>>,
     ) -> Self {
         Self {
             browser,
@@ -174,6 +187,8 @@ impl TransportConfig {
             pool_max_size,
             connect_timeout: connect_timeout.map(Duration::from_millis),
             read_timeout: read_timeout.map(Duration::from_millis),
+            client_cert,
+            client_key,
         }
     }
 }
@@ -552,6 +567,12 @@ fn build_client(config: &TransportConfig) -> Result<ResolvedClient> {
         client_builder = client_builder.cert_verification(false);
     }
 
+    if let (Some(cert), Some(key)) = (&config.client_cert, &config.client_key) {
+        let identity =
+            Identity::from_pkcs8_pem(cert, key).context("Failed to load client certificate")?;
+        client_builder = client_builder.identity(identity);
+    }
+
     if let Some(pool_idle_timeout) = config.pool_idle_timeout {
         client_builder = client_builder.pool_idle_timeout(pool_idle_timeout);
     }
@@ -601,6 +622,12 @@ fn build_ephemeral_client(config: &SessionConfig) -> Result<ResolvedClient> {
 
     if config.insecure {
         client_builder = client_builder.cert_verification(false);
+    }
+
+    if let (Some(cert), Some(key)) = (&config.client_cert, &config.client_key) {
+        let identity =
+            Identity::from_pkcs8_pem(cert, key).context("Failed to load client certificate")?;
+        client_builder = client_builder.identity(identity);
     }
 
     if let Some(connect_timeout) = config.connect_timeout {
@@ -654,6 +681,8 @@ pub fn create_managed_transport(
     pool_max_size: Option<u32>,
     connect_timeout: Option<u64>,
     read_timeout: Option<u64>,
+    client_cert: Option<Arc<Vec<u8>>>,
+    client_key: Option<Arc<Vec<u8>>>,
 ) -> Result<String> {
     let config = TransportConfig::new(
         browser,
@@ -666,6 +695,8 @@ pub fn create_managed_transport(
         pool_max_size,
         connect_timeout,
         read_timeout,
+        client_cert,
+        client_key,
     );
     TRANSPORT_MANAGER.create_transport(config)
 }
@@ -705,6 +736,8 @@ mod tests {
             connect_timeout: None,
             read_timeout: None,
             compress: true,
+            client_cert: None,
+            client_key: None,
         }
     }
 

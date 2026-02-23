@@ -299,6 +299,16 @@ fn js_object_to_request_options(
         .and_then(|v: Handle<JsValue>| v.downcast::<JsNumber, _>(cx).ok())
         .map(|v| v.value(cx) as u64);
 
+    let client_cert = obj
+        .get_opt(cx, "clientCert")?
+        .and_then(|v: Handle<JsValue>| v.downcast::<JsBuffer, _>(cx).ok())
+        .map(|v| Arc::new(v.as_slice(cx).to_vec()));
+
+    let client_key = obj
+        .get_opt(cx, "clientKey")?
+        .and_then(|v: Handle<JsValue>| v.downcast::<JsBuffer, _>(cx).ok())
+        .map(|v| Arc::new(v.as_slice(cx).to_vec()));
+
     Ok(RequestOptions {
         url,
         browser,
@@ -321,6 +331,8 @@ fn js_object_to_request_options(
         connect_timeout,
         read_timeout,
         compress,
+        client_cert,
+        client_key,
     })
 }
 
@@ -527,9 +539,11 @@ fn create_transport(mut cx: FunctionContext) -> JsResult<JsString> {
         pool_max_size_opt,
         connect_timeout_opt,
         read_timeout_opt,
+        client_cert,
+        client_key,
     ) = if let Some(value) = options_value {
         if value.is_a::<JsUndefined, _>(&mut cx) || value.is_a::<JsNull, _>(&mut cx) {
-            (None, None, None, None, None, None, None, None, None, None)
+            (None, None, None, None, None, None, None, None, None, None, None, None)
         } else {
             let obj = value.downcast_or_throw::<JsObject, _>(&mut cx)?;
             let browser = obj
@@ -573,6 +587,16 @@ fn create_transport(mut cx: FunctionContext) -> JsResult<JsString> {
                 .and_then(|v: Handle<JsValue>| v.downcast::<JsNumber, _>(&mut cx).ok())
                 .map(|v| v.value(&mut cx) as u64);
 
+            let client_cert = obj
+                .get_opt(&mut cx, "clientCert")?
+                .and_then(|v: Handle<JsValue>| v.downcast::<JsBuffer, _>(&mut cx).ok())
+                .map(|v| Arc::new(v.as_slice(&mut cx).to_vec()));
+
+            let client_key = obj
+                .get_opt(&mut cx, "clientKey")?
+                .and_then(|v: Handle<JsValue>| v.downcast::<JsBuffer, _>(&mut cx).ok())
+                .map(|v| Arc::new(v.as_slice(&mut cx).to_vec()));
+
             (
                 browser,
                 os,
@@ -584,10 +608,12 @@ fn create_transport(mut cx: FunctionContext) -> JsResult<JsString> {
                 pool_max_size,
                 connect_timeout,
                 read_timeout,
+                client_cert,
+                client_key,
             )
         }
     } else {
-        (None, None, None, None, None, None, None, None, None, None)
+        (None, None, None, None, None, None, None, None, None, None, None, None)
     };
 
     let browser = browser_opt.as_deref().map(parse_emulation);
@@ -605,6 +631,8 @@ fn create_transport(mut cx: FunctionContext) -> JsResult<JsString> {
         pool_max_size_opt,
         connect_timeout_opt,
         read_timeout_opt,
+        client_cert,
+        client_key,
     ) {
         Ok(id) => Ok(cx.string(id)),
         Err(e) => {

@@ -371,6 +371,20 @@ export interface RequestInit {
    * @default true
    */
   compress?: boolean;
+
+  /**
+   * PEM-encoded client certificate for mutual TLS (mTLS) authentication.
+   * Must be used together with `clientKey`.
+   * Ignored when `transport` is provided.
+   */
+  clientCert?: Buffer;
+
+  /**
+   * PEM-encoded private key for the client certificate.
+   * Must be used together with `clientCert`.
+   * Ignored when `transport` is provided.
+   */
+  clientKey?: Buffer;
 }
 
 /**
@@ -425,6 +439,18 @@ export interface CreateSessionOptions {
    * @default false
    */
   insecure?: boolean;
+
+  /**
+   * PEM-encoded client certificate for mutual TLS (mTLS) authentication.
+   * Must be used together with `clientKey`.
+   */
+  clientCert?: Buffer;
+
+  /**
+   * PEM-encoded private key for the client certificate.
+   * Must be used together with `clientCert`.
+   */
+  clientKey?: Buffer;
 }
 
 /**
@@ -455,6 +481,18 @@ export interface CreateTransportOptions {
    * Disable HTTPS certificate verification for this transport.
    */
   insecure?: boolean;
+
+  /**
+   * PEM-encoded client certificate for mutual TLS (mTLS) authentication.
+   * Must be used together with `clientKey`.
+   */
+  clientCert?: Buffer;
+
+  /**
+   * PEM-encoded private key for the client certificate.
+   * Must be used together with `clientCert`.
+   */
+  clientKey?: Buffer;
 
   /**
    * Idle timeout for pooled connections (ms).
@@ -621,6 +659,18 @@ export interface RequestOptions {
    * @default false
    */
   insecure?: boolean;
+
+  /**
+   * PEM-encoded client certificate for mutual TLS (mTLS) authentication.
+   * Must be used together with `clientKey`.
+   */
+  clientCert?: Buffer;
+
+  /**
+   * PEM-encoded private key for the client certificate.
+   * Must be used together with `clientCert`.
+   */
+  clientKey?: Buffer;
 }
 
 /**
