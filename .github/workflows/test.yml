@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - master
+    paths:
+      - 'rust/**'
+      - 'src/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
