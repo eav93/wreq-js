@@ -192,6 +192,33 @@ jobs:
           path: rust/*.node
           if-no-files-found: error
 
+  release-binaries:
+    name: Release binaries
+    runs-on: ubuntu-24.04
+    needs: build_full
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+
+      - name: Collect .node files
+        run: |
+          mkdir -p dist-binaries
+          find artifacts -name "*.node" -exec cp {} dist-binaries/ \;
+          ls -la dist-binaries/
+
+      - name: Create or update release with binaries
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: binaries-latest
+          name: Latest native binaries
+          prerelease: true
+          files: dist-binaries/*.node
+
   publish:
     name: Publish Package
     runs-on: ubuntu-24.04
