@@ -1,6 +1,10 @@
 name: 🏗️ Build and Publish Package
 
 on:
+  push:
+    branches: [master]
+    paths:
+      - 'rust/**'
   release:
     types: [published]
   workflow_dispatch:
